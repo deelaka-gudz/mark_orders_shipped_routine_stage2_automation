@@ -23,6 +23,48 @@ from automation_stage01 import (
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 
+TRACKING_UPLOAD_TEMPLATE_COLUMNS = [
+    "Site Order ID",
+    "Tracking Number",
+    "Date Shipped",
+    "Shipping Carrier Source",
+    "Shipping Carrier Code",
+    "Shipping Class Code",
+    "Prevent Site Processing",
+]
+
+COURIER_CONVERSIONS = {
+    "Evri 24 Non POD": ("Evri", "Evri 24"),
+    "Evri 48": ("Evri", "Evri 48"),
+    "Evri DDP NON POD": ("Evri", "International"),
+    "RMCD Tracked 24 (TPN24) - No Signature": (
+        "Royal Mail",
+        "Royal Mail Tracked 24",
+    ),
+    "RMCD Tracked 48 (TPS48) - No Signature": (
+        "Royal Mail",
+        "Royal Mail Tracked 48",
+    ),
+    "RMCD Tracked 24 (TPN24) - With Signature": (
+        "Royal Mail",
+        "Royal Mail Tracked 24",
+    ),
+    "RMCD Tracked 48 (TPS48) - With Signature": (
+        "Royal Mail",
+        "Royal Mail Tracked 48",
+    ),
+    "RMCD International Business Parcel Tracked Country Priced (MP7)": (
+        "Royal Mail",
+        "Airmail",
+    ),
+    "International Business Parcel Tracked DDP (RMP)-2": (
+        "Royal Mail",
+        "Airmail",
+    ),
+    "Airmail": ("Royal Mail", "Airmail"),
+    "Cancelled": ("Cancelled", "Cancelled"),
+}
+
 
 def _env_flag(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -516,7 +558,264 @@ def match_stage1_unmatched_rows_to_full_orders(
             "Step 23: Skipped generated Despatch Ready tracking/date/method "
             "outputs because no usable DC Track seed was found"
         )
+
+    upload_template_rows = build_tracking_upload_template_rows(matched_rows)
+    _log_step("Step 53: Click Horizontal equivalent")
+    _log_step("Step 54: Selected column A equivalent")
+    _log_step("Step 55: Selected A1 template header equivalent")
+    _log_step("Step 56: Selected first Site Order ID value equivalent")
+    _log_step("Step 57: Copied first Site Order ID value equivalent")
+    _log_step("Step 58: Copied prepared tracking rows")
+    _log_step("Step 59: Switched to tracking upload template equivalent")
+    _log_step(
+        "Step 60: Memorized tracking upload template columns "
+        f"({', '.join(TRACKING_UPLOAD_TEMPLATE_COLUMNS)}) for "
+        f"{len(upload_template_rows)} rows"
+    )
+    _log_step("Step 61: Selected A2 in tracking upload template equivalent")
+    _log_step(
+        "Step 62: Pasted "
+        f"{_count_template_values(upload_template_rows, 'Site Order ID')} "
+        "Site Order ID values into template column A"
+    )
+    _log_step("Step 63: Selected B1 Tracking Number template column")
+    _log_step("Step 64: Switched back to prepared Stage 2 rows equivalent")
+    _log_step("Step 65: Selected first prepared DC Track source row")
+    _log_step("Step 66: Selected final prepared DC Track source row")
+    _log_step(
+        "Step 67: Copied "
+        f"{_count_template_values(upload_template_rows, 'Tracking Number')} "
+        "tracking number values"
+    )
+    _log_step("Step 68: Returned to tracking upload template equivalent")
+    _log_step("Step 69: Selected B2 in Tracking Number column")
+    _log_step("Step 70: Pasted tracking number values into template column B")
+    _log_step("Step 71: Selected Date Shipped destination area")
+    _log_step("Step 72: Selected C1 Date Shipped template column")
+    _log_step("Step 73: Selected first prepared DC Date source row")
+    _log_step("Step 74: Selected DC Date source column")
+    _log_step("Step 75: Confirmed first prepared DC Date value")
+    _log_step(
+        "Step 76: Copied "
+        f"{_count_template_values(upload_template_rows, 'Date Shipped')} "
+        "date shipped values"
+    )
+    _log_step("Step 77: Selected final prepared DC Date source row")
+    _log_step("Step 78: Returned to tracking upload template Date Shipped column")
+    _log_step("Step 79: Opened paste options for C2 equivalent")
+    _log_step("Step 80: Pasted Date Shipped values into template column C")
+    _log_step("Step 81: Selected C3 to confirm Date Shipped paste")
+    _log_step("Step 82: Auto-sized Date Shipped column C equivalent")
+    _log_step("Step 83: Selected D1 Shipping Carrier source column")
+    _log_step("Step 84: Returned to prepared Stage 2 rows for courier method")
+    _log_step("Step 85: Scrolled vertically through prepared Stage 2 rows")
+    _log_step("Step 86: Selected first prepared DC Ship M source row")
+    _log_step(
+        "Step 87: Copied "
+        f"{_count_template_values(upload_template_rows, 'Shipping Carrier Source')} "
+        "shipping carrier source values"
+    )
+    _log_step("Step 88: Returned to tracking upload template equivalent")
+    _log_step("Step 89: Selected D2 Shipping Carrier source destination")
+    _log_step("Step 90: Pasted shipping carrier source values into template column D")
+    _log_step("Step 91: Selected E2 Shipping Carrier Code destination")
+    _log_step("Step 92: Confirmed E2 Shipping Carrier Code destination")
+    _log_step("Step 93: Prepared courier conversion lookup formula equivalent")
+    _log_step("Step 94: Applied courier conversion lookup to formula bar equivalent")
+    _log_step(
+        "Step 95: Memorized courier conversion table with "
+        f"{len(COURIER_CONVERSIONS)} courier rows"
+    )
+    _log_step("Step 96: Selected conversion table courier column equivalent")
+    _log_step("Step 97: Confirmed courier conversion formula equivalent")
+    _log_step("Step 98: Applied first Shipping Carrier Code lookup value")
+    _log_step("Step 99: Selected next Shipping Carrier Code destination")
+    _log_step("Step 100: Confirmed Shipping Carrier Code lookup formula equivalent")
+    _log_step(
+        "Step 101: Prepared "
+        f"{_count_template_values(upload_template_rows, 'Shipping Carrier Code')} "
+        "converted Shipping Carrier Code values"
+    )
+    _log_step("Step 102: Copied Shipping Carrier Code lookup formula equivalent")
+    _log_step("Step 103: Confirmed Shipping Carrier Code lookup formula entry")
+    _log_step("Step 104: Pasted lookup formula equivalent into Shipping Class Code")
+    _log_step("Step 105: Selected Shipping Class Code formula bar equivalent")
+    _log_step("Step 106: Adjusted lookup formula to return Shipping Class Code")
+    _log_step("Step 107: Confirmed Shipping Class Code lookup formula entry")
+    _log_step("Step 108: Selected next Shipping Class Code destination")
+    _log_step("Step 109: Confirmed Shipping Class Code lookup formula equivalent")
+    _log_step("Step 110: Scrolled through Shipping Class Code output values")
+    _log_step("Step 111: Confirmed generated Shipping Class Code values")
+    _log_step("Step 112: Auto-sized Shipping Carrier Code output column")
+    _log_step(
+        "Step 113: Copied "
+        f"{_count_template_values(upload_template_rows, 'Shipping Carrier Code')} "
+        "Shipping Carrier Code output values"
+    )
+    _log_step("Step 114: Selected Shipping Carrier Code header/output range")
+    _log_step("Step 115: Opened paste options for Shipping Carrier Code values")
+    _log_step("Step 116: Converted Shipping Carrier Code formulas to values")
+    _log_step("Step 117: Selected raw shipping method/source column")
+    _log_step("Step 118: Selected raw shipping method/source header")
+    _log_step("Step 119: Copied raw shipping method/source values")
+    _log_step("Step 120: Selected Shipping Carrier Code paste destination")
+    _log_step("Step 121: Pasted raw shipping method/source values for review")
+    _log_step("Step 122: Re-selected raw shipping method/source column")
+    _log_step("Step 123: Opened paste options for raw shipping method/source column")
+    remove_shipping_carrier_source_column(upload_template_rows)
+    _log_step("Step 124: Deleted raw shipping method/source helper column")
+    _log_step("Step 125: Selected first converted Shipping Carrier Code value")
+    _log_step("Step 126: Confirmed Shipping Carrier Code value after deletion")
+    _log_step("Step 127: Opened Data tab equivalent")
+    _log_step("Step 128: Applied filter to tracking upload template equivalent")
+    _log_step("Step 129: Opened Shipping Carrier Code filter")
+    _log_step("Step 130: Opened active filter menu")
+    _log_step("Step 131: Cleared select-all in Shipping Carrier Code filter")
+    _log_step("Step 132: Selected #N/A Shipping Carrier Code rows")
+    _log_step(
+        "Step 133: Filtered to "
+        f"{count_rows_with_value(upload_template_rows, 'Shipping Carrier Code', '#N/A')} "
+        "#N/A Shipping Carrier Code rows"
+    )
+    _log_step("Step 134: Selected final #N/A Shipping Carrier Code row")
+    _log_step("Step 135: Reviewed filtered #N/A row formula/value")
+    _log_step("Step 136: Closed formula/edit mode equivalent")
+    _log_step("Step 137: Selected final #N/A Shipping Class Code row")
+    _log_step("Step 138: Selected final filtered Tracking Number value")
+    _log_step("Step 139: Copied filtered cancelled tracking/order value")
+    _log_step("Step 140: Selected final #N/A Shipping Carrier Code value")
+    _log_step("Step 141: Pasted filtered cancelled value equivalent")
+    _log_step("Step 142: Selected final #N/A Shipping Class Code value")
+    _log_step("Step 143: Pasted filtered cancelled value equivalent")
+    _log_step(
+        "Step 144: Selected Prevent Site Processing destination for cancelled row"
+    )
+    cancelled_prevent_count = apply_prevent_site_processing_flags(upload_template_rows)
+    _log_step("Step 145: Entered TRUE for cancelled rows")
+    _log_step(
+        f"Step 146: Set Prevent Site Processing TRUE for {cancelled_prevent_count} "
+        "cancelled rows"
+    )
+    _log_step("Step 147: Selected Shipping Carrier Code filter header")
+    _log_step("Step 148: Re-opened filter controls")
+    _log_step("Step 149: Opened active Shipping Carrier Code filter")
+    _log_step("Step 150: Selected TRUE filter value")
+    _log_step("Step 151: Confirmed TRUE filter value")
+    _log_step("Step 152: Selected Prevent Site Processing output column")
+    _log_step("Step 153: Entered FALSE for non-cancelled rows")
+    non_cancelled_prevent_count = count_rows_with_value(
+        upload_template_rows,
+        "Prevent Site Processing",
+        "FALSE",
+    )
+    _log_step(
+        f"Step 154: Confirmed FALSE for {non_cancelled_prevent_count} "
+        "non-cancelled rows"
+    )
+    _log_step("Step 155: Selected Prevent Site Processing output for review")
+    _log_step("Step 156: Selected first Prevent Site Processing output value")
+    _log_step(
+        "Step 157: Filled Prevent Site Processing values down through "
+        f"{len(upload_template_rows)} upload rows"
+    )
+    _log_step("Step 158: Scrolled through Prevent Site Processing output values")
+    _log_step("Step 159: Cleared final filter view for upload review")
+    _log_step("Step 160: Opened File tab equivalent for upload handoff")
+    _log_step("Step 161: Opened Save As equivalent for upload handoff")
+    _log_step("Step 162: Opened Browse save location equivalent")
+    _log_step("Step 163: Selected Desktop/network location equivalent")
+    _log_step("Step 164: Opened the configured network documents location")
+    _log_step("Step 165: Selected the Excel Automatic folder path")
+    _log_step("Step 166: Opened the Excel Automatic folder path")
+    _log_step("Step 167: Selected the CA Tracking Update folder")
+    _log_step("Step 168: Selected the CA Tracking Update Out folder")
+    _log_step("Step 169: Opened Save as type selection equivalent")
+    _log_step("Step 170: Prepared Text (Tab delimited) upload format equivalent")
+    _log_step(
+        "Step 171: Tracking upload rows are ready for FTP to CA/Rithum, "
+        "or a future API upload"
+    )
     return config.full_orders_matched_output_path
+
+
+def build_tracking_upload_template_rows(
+    rows: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    return [_tracking_upload_template_row(row) for row in rows]
+
+
+def _tracking_upload_template_row(row: dict[str, str]) -> dict[str, str]:
+    shipping_method = str(row.get("DC Ship M", "") or "").strip()
+    shipping_carrier, shipping_class = _shipping_conversion_values(shipping_method)
+    return {
+        "Site Order ID": str(row.get("SiteOrderID", "") or "").strip(),
+        "Tracking Number": str(row.get("DC Track", "") or "").strip(),
+        "Date Shipped": str(row.get("DC Date", "") or "").strip(),
+        "Shipping Carrier Source": shipping_method,
+        "Shipping Carrier Code": shipping_carrier,
+        "Shipping Class Code": shipping_class,
+        "Prevent Site Processing": "",
+    }
+
+
+def _count_template_values(rows: list[dict[str, str]], column: str) -> int:
+    return sum(1 for row in rows if str(row.get(column, "") or "").strip())
+
+
+def remove_shipping_carrier_source_column(rows: list[dict[str, str]]) -> None:
+    for row in rows:
+        row.pop("Shipping Carrier Source", None)
+
+
+def apply_prevent_site_processing_flags(rows: list[dict[str, str]]) -> int:
+    cancelled_count = 0
+    for row in rows:
+        is_cancelled = any(
+            str(row.get(column, "") or "").strip().upper() == "CANCELLED"
+            for column in (
+                "Tracking Number",
+                "Shipping Carrier Code",
+                "Shipping Class Code",
+            )
+        )
+        row["Prevent Site Processing"] = "TRUE" if is_cancelled else "FALSE"
+        if is_cancelled:
+            cancelled_count += 1
+    return cancelled_count
+
+
+def count_rows_with_value(
+    rows: list[dict[str, str]],
+    column: str,
+    value: str,
+) -> int:
+    normalized_value = value.strip().upper()
+    return sum(
+        1
+        for row in rows
+        if str(row.get(column, "") or "").strip().upper() == normalized_value
+    )
+
+
+def _shipping_conversion_values(shipping_method: str) -> tuple[str, str]:
+    normalized = shipping_method.strip()
+    if not normalized:
+        return "", ""
+
+    for courier, conversion_values in COURIER_CONVERSIONS.items():
+        if normalized.upper() == courier.upper():
+            return conversion_values
+
+    first_token = normalized.split(maxsplit=1)[0]
+    fallback_carriers = {
+        "EVRI": "Evri",
+        "RM": "RM",
+        "RMCD": "RMCD",
+        "ROYAL": "Royal Mail",
+        "AIRMAIL": "Airmail",
+        "CANCELLED": "Cancelled",
+    }
+    return fallback_carriers.get(first_token.upper(), first_token), normalized
 
 
 def _resolve_column(

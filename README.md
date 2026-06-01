@@ -1,19 +1,15 @@
 # Mark Orders Shipped Routine - Stage 2 Automation
 
-Python + Playwright automation for the first stage of the "mark orders shipped" workflow.
+Python + Playwright automation for the "mark orders shipped" workflow.
 
 Manual process reference:
 
 https://scribehow.com/viewer/How_To_Process_And_Filter_Shipping_Report_Export_Data__yzCBrf8XQ1mNQiWUOE8N8g
 
-This repo is being built step by step from the process guide. The current script focuses on the Helm/DC side:
+This repo is being built step by step from the process guide. The current flow is split into two scripts:
 
-1. Download Rithum/ChannelAdvisor orders using the API.
-2. Log in to Helm.
-3. Open Reports.
-4. Open the Shipping report.
-5. Click Download Report.
-6. Save the downloaded report locally.
+1. `automation_stage01.py`: downloads/matches the Rithum order export against the Helm/DC Shipping Report.
+2. `automation_stage02.py`: downloads the Helm Full Orders Report and prepares the final tracking-upload data in memory.
 
 ## What Rithum/ChannelAdvisor Does
 
@@ -24,7 +20,101 @@ In the full workflow there are two input files:
 - Rithum/ChannelAdvisor order export from email, FTP, or API.
 - Helm/DC shipping report containing the real tracking numbers.
 
-The current `automation.py` downloads the Rithum order data first, then requests the Helm/DC shipping report.
+`automation_stage01.py` downloads or reads the Rithum order data first, then requests the Helm/DC shipping report.
+
+## Stage 1
+
+`automation_stage01.py` handles the first spreadsheet-cleaning section:
+
+1. Log in to Helm.
+2. Optionally download Rithum/ChannelAdvisor orders through the API.
+3. Download the Helm/DC Shipping Report.
+4. Match order rows to DC shipping rows using the configured order ID columns.
+5. Add DC output fields:
+   - `DC Date`
+   - `DC Ship M`
+   - `DC Track`
+6. Filter non-GB rows for review.
+7. Fill missing non-GB dispatch values with `Airmail`.
+8. Save the rows that still need Stage 2 review to `NON_GB_UNMATCHED_OUTPUT_PATH`.
+
+The key Stage 1 output for Stage 2 is usually:
+
+```text
+downloads/non_gb_unmatched_orders_review.csv
+```
+
+## Stage 2
+
+`automation_stage02.py` continues from the Stage 1 unmatched rows:
+
+1. Log in to Helm.
+2. Open Reports.
+3. Open the Orders reports section.
+4. Request and download the Helm Full Orders Report.
+5. Match Stage 1 unmatched rows against the Full Orders Report.
+6. Pull Full Orders status and supporting order fields into the Stage 2 matched rows.
+7. If an order is `Cancelled`, set `DC Date`, `DC Ship M`, and `DC Track` to `Cancelled`.
+8. If an order is `Despatch Ready` and still missing tracking, generate tracking numbers by incrementing the last three digits of a usable tracking seed.
+9. Copy the seed shipping method and dispatch date into generated rows where needed.
+10. Save the detailed Stage 2 matched output to `FULL_ORDERS_MATCHED_OUTPUT_PATH`.
+
+The Stage 2 matched output is a detailed review file. It is not the final upload template.
+
+## Tracking Upload Template Logic
+
+The manual process opens a separate upload template and copy/pastes values into it. The automation does not create a separate template file yet. Instead, `automation_stage02.py` memorizes the template layout in code and builds the equivalent rows in memory.
+
+The memorized upload-template columns are:
+
+```text
+Site Order ID
+Tracking Number
+Date Shipped
+Shipping Carrier Source
+Shipping Carrier Code
+Shipping Class Code
+Prevent Site Processing
+```
+
+The script maps values like this:
+
+- `Site Order ID`: from `SiteOrderID`
+- `Tracking Number`: from `DC Track`
+- `Date Shipped`: from `DC Date`
+- `Shipping Carrier Source`: from `DC Ship M`
+- `Shipping Carrier Code`: converted from `DC Ship M`
+- `Shipping Class Code`: converted from `DC Ship M`
+- `Prevent Site Processing`: `TRUE` for cancelled rows, `FALSE` for normal rows
+
+The manual spreadsheet uses formulas and paste-as-values. In Python, those are represented as direct transformations:
+
+- The carrier/class lookup is handled by `COURIER_CONVERSIONS`.
+- The raw helper column is removed in memory after conversion.
+- Cancelled rows are flagged with `Prevent Site Processing = TRUE`.
+- Non-cancelled rows are flagged with `Prevent Site Processing = FALSE`.
+- The final upload rows are reviewed with filters cleared and `Prevent Site Processing` filled for all rows.
+- The manual save step is represented as a tab-delimited upload handoff, ready for the CA/Rithum FTP process or a future API upload.
+
+The final manual steps save the completed template into the `CA Tracking Update\Out` folder as `Text (Tab delimited)`. The script currently prepares the same upload-shaped rows in memory and logs that handoff point; it does not write a separate template workbook.
+
+To add a new courier, update `COURIER_CONVERSIONS` in `automation_stage02.py`:
+
+```python
+COURIER_CONVERSIONS = {
+    "Evri 24 Non POD": ("Evri", "Evri 24"),
+    "RMCD Tracked 48 (TPS48) - No Signature": (
+        "Royal Mail",
+        "Royal Mail Tracked 48",
+    ),
+}
+```
+
+The key format is:
+
+```python
+"Raw DC Ship M value": ("Shipping Carrier Code", "Shipping Class Code")
+```
 
 ## Setup
 
@@ -75,8 +165,13 @@ NON_GB_OUTPUT_PATH=downloads/non_gb_orders_review.csv
 NON_GB_AIRMAIL_OUTPUT_PATH=downloads/non_gb_orders_airmail.csv
 NON_GB_WITH_DC_DATE_OUTPUT_PATH=downloads/non_gb_orders_with_dc_date_review.csv
 NON_GB_UNMATCHED_OUTPUT_PATH=downloads/non_gb_unmatched_orders_review.csv
+FULL_ORDERS_MATCHED_OUTPUT_PATH=downloads/stage2_full_orders_matched.csv
 MATCH_KEY_COLUMN=Order ID
+ORDER_MATCH_KEY_COLUMN=SiteOrderID
+DC_MATCH_KEY_COLUMN=Order ID
 SHIPPING_COUNTRY_COLUMN=Shipping Country
+FULL_ORDERS_MATCH_KEY_COLUMN=SiteOrderID
+FULL_ORDERS_REPORT_KEY_COLUMN=Channel Order ID
 RITHUM_ORDERS_QUERY_STRING=$top=100
 RITHUM_MAX_PAGES=20
 HEADLESS=false
@@ -99,8 +194,13 @@ Optional values:
 - `NON_GB_AIRMAIL_OUTPUT_PATH`: non-GB CSV after filling missing DC values with `Airmail`.
 - `NON_GB_WITH_DC_DATE_OUTPUT_PATH`: non-GB review CSV containing rows that still have a real DC date after Airmail defaults.
 - `NON_GB_UNMATCHED_OUTPUT_PATH`: non-GB review CSV containing rows that had blank or `#N/A` DC Date before Airmail defaults.
+- `FULL_ORDERS_MATCHED_OUTPUT_PATH`: detailed Stage 2 output after matching Stage 1 unmatched rows to the Full Orders Report.
 - `MATCH_KEY_COLUMN`: column name that exists in both files, for example `Order ID`.
+- `ORDER_MATCH_KEY_COLUMN`: order export column used for the Stage 1 lookup.
+- `DC_MATCH_KEY_COLUMN`: DC shipping report column used for the Stage 1 lookup.
 - `SHIPPING_COUNTRY_COLUMN`: country column used to reproduce the Excel non-GB filter.
+- `FULL_ORDERS_MATCH_KEY_COLUMN`: Stage 1 unmatched column used to match against the Full Orders Report.
+- `FULL_ORDERS_REPORT_KEY_COLUMN`: Full Orders Report column used for the Stage 2 lookup.
 - `RITHUM_ORDERS_QUERY_STRING`: OData query string passed to `/v1/orders`.
 - `RITHUM_MAX_PAGES`: maximum number of paginated Rithum API pages to read.
 - `HEADLESS`: set to `true` to run without opening the browser.
@@ -110,19 +210,20 @@ Optional values:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-python automation.py
+python automation_stage01.py
+python automation_stage02.py
 ```
 
-The script prints completed steps as it runs. Rithum orders are saved to `downloads/rithum_orders.csv` by default. If Helm emits a direct browser download, that file is saved to `downloads/` by default.
+The scripts print completed steps as they run. Rithum orders are saved to `downloads/rithum_orders.csv` by default. Helm report downloads are saved to `downloads/` by default.
 
 ## Current Script Map
 
-- `automation.py`: active script for downloading Rithum orders and requesting the Helm Shipping Report.
-- `clf_temp.py`: previous Helm automation containing the reusable login flow and helper functions.
+- `automation_stage01.py`: Helm login, Shipping Report download, Rithum/order matching, non-GB review outputs.
+- `automation_stage02.py`: Full Orders Report download, Stage 2 matching, cancelled/despatch-ready handling, in-memory tracking upload preparation.
 
 ## Next Stages
 
 Planned next steps:
 
-1. Confirm the correct match column between the Rithum order export and DC report.
-2. Confirm the final output columns needed to mark orders as shipped.
+1. Add the actual tab-delimited export, FTP upload, or Rithum API upload once the handoff method is confirmed.
+2. Add any missing courier mappings to `COURIER_CONVERSIONS`.
