@@ -12,9 +12,12 @@ from automation_stage01 import (
     _download_helm_export_url,
     _log_info,
     _log_step,
+    _normalized_key,
     _origin_url,
+    _read_csv,
     _save_download,
     _wait_for_network_idle,
+    _write_dict_rows,
     open_reports_page,
 )
 
@@ -41,6 +44,10 @@ class Config:
     email: str
     password: str
     download_dir: Path
+    non_gb_unmatched_output_path: Path
+    full_orders_matched_output_path: Path
+    full_orders_match_key_column: str
+    full_orders_report_key_column: str
     helm_report_ready_timeout_seconds: int
     headless: bool
     debug: bool
@@ -58,6 +65,20 @@ class Config:
             email=_require_env("HELM_EMAIL").strip(),
             password=_require_env("HELM_PASSWORD"),
             download_dir=Path(os.getenv("HELM_REPORT_DOWNLOAD_DIR") or "downloads"),
+            non_gb_unmatched_output_path=Path(
+                os.getenv("NON_GB_UNMATCHED_OUTPUT_PATH")
+                or "downloads/non_gb_unmatched_orders_review.csv"
+            ),
+            full_orders_matched_output_path=Path(
+                os.getenv("FULL_ORDERS_MATCHED_OUTPUT_PATH")
+                or "downloads/stage2_full_orders_matched.csv"
+            ),
+            full_orders_match_key_column=(
+                os.getenv("FULL_ORDERS_MATCH_KEY_COLUMN") or "SiteOrderID"
+            ).strip(),
+            full_orders_report_key_column=(
+                os.getenv("FULL_ORDERS_REPORT_KEY_COLUMN") or "Channel Order ID"
+            ).strip(),
             helm_report_ready_timeout_seconds=int(
                 os.getenv("HELM_REPORT_READY_TIMEOUT_SECONDS") or "2400"
             ),
@@ -177,6 +198,8 @@ def download_completed_full_orders_report_from_history(
     last_logged_status: str | None = None
     retry_count = 0
     max_retries = 3
+    not_found_refresh_count = 0
+    max_not_found_refreshes = 5
 
     while time.monotonic() < deadline:
         status = _latest_full_orders_report_status(page)
@@ -193,6 +216,21 @@ def download_completed_full_orders_report_from_history(
                 f"(elapsed {elapsed_seconds}s)."
             )
             last_logged_status = normalized_status
+
+        if normalized_status.lower() == "not found":
+            not_found_refresh_count += 1
+            if not_found_refresh_count > max_not_found_refreshes:
+                print(
+                    "[WARN] Step 2.6: Full Orders Report row was not found after "
+                    f"{max_not_found_refreshes} refresh checks. Requesting a fresh "
+                    "export."
+                )
+                request_full_orders_report_export(page, config)
+                not_found_refresh_count = 0
+                last_logged_status = None
+                continue
+        else:
+            not_found_refresh_count = 0
 
         if normalized_status.lower() in {"cancelled", "failed"}:
             if retry_count >= max_retries:
@@ -300,6 +338,131 @@ def _click_latest_full_orders_report_download(page: Page) -> bool:
         }"""))
 
 
+def match_stage1_unmatched_rows_to_full_orders(
+    full_orders_path: Path,
+    config: Config,
+) -> Path | None:
+    if not config.non_gb_unmatched_output_path.exists():
+        _log_step(
+            "Step 4: Skipped Full Orders lookup because Stage 1 unmatched file is missing"
+        )
+        print(
+            f"[INFO] Expected Stage 1 unmatched file at "
+            f"{config.non_gb_unmatched_output_path}"
+        )
+        return None
+
+    _log_step("Step 4: Read Full Orders Report and Stage 1 unmatched rows")
+    unmatched_rows = _read_csv(config.non_gb_unmatched_output_path)
+    full_order_rows = _read_csv(full_orders_path)
+    _log_step(
+        f"Step 5: Loaded {len(unmatched_rows)} rows with #N/A from previous steps"
+    )
+
+    if not unmatched_rows:
+        _write_dict_rows(config.full_orders_matched_output_path, [])
+        _log_step("Step 10: No Stage 1 unmatched rows to match against Full Orders")
+        return config.full_orders_matched_output_path
+
+    unmatched_key_column = _resolve_column(
+        unmatched_rows[0],
+        config.full_orders_match_key_column,
+        ["SiteOrderID", "Order ID", "Channel Order ID"],
+        "Stage 1 unmatched",
+    )
+    full_orders_key_column = _resolve_column(
+        full_order_rows[0] if full_order_rows else {},
+        config.full_orders_report_key_column,
+        ["Channel Order ID", "Order Channel Alt. ID", "SiteOrderID", "Order ID"],
+        "Full Orders Report",
+    )
+    _log_step(f"Step 6: Selected '{unmatched_key_column}' as Stage 1 lookup key")
+
+    full_order_output_columns = [
+        "Sales Channel",
+        "Channel Order ID",
+        "Order Channel Alt. ID",
+        "Order Date",
+        "Status",
+        "Shipping Name Company",
+        "Shipping Name",
+        "Shipping Address Line One",
+        "Shipping Address Line Two",
+    ]
+    available_output_columns = [
+        column for column in full_order_output_columns if column in (full_order_rows[0] if full_order_rows else {})
+    ]
+    _log_step("Step 7: Prepared Full Orders output columns")
+
+    full_orders_lookup = _build_full_orders_lookup(
+        full_order_rows,
+        full_orders_key_column,
+        alternate_key_columns=["Order Channel Alt. ID"],
+    )
+    _log_step("Step 8: Built Full Orders lookup from downloaded report")
+
+    matched_rows = []
+    matched_count = 0
+    for row in unmatched_rows:
+        output_row = dict(row)
+        full_order_row = full_orders_lookup.get(_normalized_key(row.get(unmatched_key_column)))
+        if full_order_row:
+            matched_count += 1
+            output_row["Matched In Full Orders Report"] = "Yes"
+            for column in available_output_columns:
+                output_row[f"Full Orders {column}"] = full_order_row.get(column, "")
+        else:
+            output_row["Matched In Full Orders Report"] = "No"
+            for column in available_output_columns:
+                output_row[f"Full Orders {column}"] = ""
+        matched_rows.append(output_row)
+    _log_step("Step 9: Applied Full Orders lookup to Stage 1 #N/A rows")
+
+    _write_dict_rows(config.full_orders_matched_output_path, matched_rows)
+    _log_step(
+        f"Step 10: Saved {matched_count}/{len(matched_rows)} Full Orders matches to "
+        f"{config.full_orders_matched_output_path}"
+    )
+    return config.full_orders_matched_output_path
+
+
+def _resolve_column(
+    row: dict[str, str],
+    configured_column: str,
+    fallback_columns: list[str],
+    source_name: str,
+) -> str:
+    columns = set(row.keys())
+    if configured_column in columns:
+        return configured_column
+
+    for fallback_column in fallback_columns:
+        if fallback_column in columns:
+            return fallback_column
+
+    candidates = ", ".join(row.keys())
+    raise RuntimeError(
+        f"{source_name} does not contain lookup column '{configured_column}'. "
+        f"Available columns: {candidates}"
+    )
+
+
+def _build_full_orders_lookup(
+    rows: list[dict[str, str]],
+    key_column: str,
+    alternate_key_columns: list[str],
+) -> dict[str, dict[str, str]]:
+    lookup: dict[str, dict[str, str]] = {}
+    for row in rows:
+        for column in [key_column, *alternate_key_columns]:
+            if column not in row:
+                continue
+            key = _normalized_key(row.get(column))
+            if key and key not in lookup:
+                lookup[key] = row
+    return lookup
+
+
 def run_stage2_steps(page: Page, config: Config) -> None:
     _log_info(config.debug, f"Stage 2 starting from: {page.url}")
 
@@ -311,6 +474,10 @@ def run_stage2_steps(page: Page, config: Config) -> None:
 
     downloaded_path = download_full_orders_report(page, config)
     _log_step(f"Step 3: Download Full Orders Report to {downloaded_path}")
+
+    matched_path = match_stage1_unmatched_rows_to_full_orders(downloaded_path, config)
+    if matched_path:
+        _log_step(f"Stage 2 matched output available at {matched_path}")
 
     _log_step("Stage 2: Ready for next instructions")
 
