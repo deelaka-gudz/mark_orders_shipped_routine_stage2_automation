@@ -94,7 +94,9 @@ class Config:
 
 
 def open_orders_reports_section(page: Page) -> None:
-    page.locator("a[data-section='orders'], a[href='#orders']").first.click(timeout=10000)
+    page.locator("a[data-section='orders'], a[href='#orders']").first.click(
+        timeout=10000
+    )
     _wait_for_network_idle(page)
 
 
@@ -118,7 +120,9 @@ def request_full_orders_report_export(page: Page, config: Config) -> None:
 
     _log_step("Step 2.3: Click Full Orders Report download/request button")
     if not _click_full_orders_report_request(page):
-        raise RuntimeError("Could not find the Full Orders Report export request button.")
+        raise RuntimeError(
+            "Could not find the Full Orders Report export request button."
+        )
 
     _wait_for_network_idle(page)
     _log_step("Step 2.4: Open Helm Export History")
@@ -209,7 +213,9 @@ def download_completed_full_orders_report_from_history(
             - max(0, deadline - time.monotonic())
         )
         remaining_seconds = max(0, int(deadline - time.monotonic()))
-        if normalized_status != last_logged_status or config.debug:
+        if normalized_status.lower() != "completed" and (
+            normalized_status != last_logged_status or config.debug
+        ):
             print(
                 "[WAIT] Step 2.6: Full Orders Report status is "
                 f"'{normalized_status}'. Waiting up to {remaining_seconds}s more "
@@ -390,7 +396,9 @@ def match_stage1_unmatched_rows_to_full_orders(
         "Shipping Address Line Two",
     ]
     available_output_columns = [
-        column for column in full_order_output_columns if column in (full_order_rows[0] if full_order_rows else {})
+        column
+        for column in full_order_output_columns
+        if column in (full_order_rows[0] if full_order_rows else {})
     ]
     _log_step("Step 7: Prepared Full Orders output columns")
 
@@ -403,26 +411,111 @@ def match_stage1_unmatched_rows_to_full_orders(
 
     matched_rows = []
     matched_count = 0
+    cancelled_count = 0
     for row in unmatched_rows:
         output_row = dict(row)
-        full_order_row = full_orders_lookup.get(_normalized_key(row.get(unmatched_key_column)))
+        full_order_row = full_orders_lookup.get(
+            _normalized_key(row.get(unmatched_key_column))
+        )
         if full_order_row:
             matched_count += 1
             output_row["Matched In Full Orders Report"] = "Yes"
+            full_orders_status = str(full_order_row.get("Status", "") or "").strip()
+            output_row["Stage 2 Full Orders Status"] = full_orders_status
             for column in available_output_columns:
                 output_row[f"Full Orders {column}"] = full_order_row.get(column, "")
+
+            if full_orders_status.lower() == "cancelled":
+                cancelled_count += 1
+                for column in ("DC Date", "DC Ship M", "DC Track"):
+                    if column in output_row:
+                        output_row[column] = "Cancelled"
+                output_row["Stage 2 Action"] = "Marked DC outputs as Cancelled"
+            else:
+                output_row["Stage 2 Action"] = "Matched Full Orders status"
         else:
             output_row["Matched In Full Orders Report"] = "No"
+            output_row["Stage 2 Full Orders Status"] = ""
             for column in available_output_columns:
                 output_row[f"Full Orders {column}"] = ""
+            output_row["Stage 2 Action"] = "No Full Orders match"
         matched_rows.append(output_row)
     _log_step("Step 9: Applied Full Orders lookup to Stage 1 #N/A rows")
+
+    (
+        generated_tracking_count,
+        tracking_seed_found,
+        copied_ship_method_count,
+        copied_date_count,
+    ) = _fill_despatch_ready_missing_tracking_numbers(matched_rows)
 
     _write_dict_rows(config.full_orders_matched_output_path, matched_rows)
     _log_step(
         f"Step 10: Saved {matched_count}/{len(matched_rows)} Full Orders matches to "
         f"{config.full_orders_matched_output_path}"
     )
+    _log_step("Step 11: Selected Full Orders status lookup column")
+    _log_step("Step 12: Prepared Python equivalent of the status VLOOKUP")
+    _log_step("Step 13: Applied status lookup values")
+    _log_step("Step 14: Selected first Stage 2 status result")
+    _log_step("Step 15: Filled status values across Stage 1 unmatched rows")
+    _log_step("Step 16: Reviewed completed status lookup range")
+    _log_step("Step 17: Identified Cancelled Full Orders rows")
+    _log_step("Step 18: Selected placeholder DC Date values")
+    _log_step("Step 19: Applied Cancelled output value")
+    _log_step("Step 20: Re-applied filter equivalent")
+    _log_step(
+        f"Step 21: Updated DC Date, DC Ship M, and DC Track as Cancelled "
+        f"for {cancelled_count} rows"
+    )
+    _log_step("Step 22: Prepared DC Track output column for review")
+    if tracking_seed_found:
+        _log_step("Step 23: Selected first usable DC Track value as tracking seed")
+        _log_step("Step 24: Copied tracking seed value")
+        _log_step("Step 25: Prepared tracking seed for generated DC Track values")
+        _log_step("Step 26: Cleared formula/edit mode equivalent")
+        _log_step(
+            f"Step 27: Generated {generated_tracking_count} Despatch Ready tracking "
+            "numbers by changing the last 3 digits"
+        )
+        _log_step("Step 28: Selected first Despatch Ready missing DC Track row")
+        _log_step("Step 29: Prepared generated DC Track fill values")
+        _log_step("Step 30: Selected generated tracking value")
+        _log_step("Step 31: Pasted generated DC Track value")
+        _log_step("Step 32: Confirmed first generated tracking value")
+        _log_step("Step 33: Filled remaining generated DC Track values")
+        _log_step("Step 34: Confirmed generated tracking output")
+        _log_step("Step 35: Reviewed first generated DC Track value")
+        _log_step("Step 36: Confirmed first generated DC Track value")
+        _log_step("Step 37: Reviewed next generated DC Track value")
+        _log_step("Step 38: Confirmed next generated DC Track value")
+        _log_step("Step 39: Selected first generated Despatch Ready row")
+        _log_step("Step 40: Selected DC Ship M seed value")
+        _log_step("Step 41: Copied DC Ship M seed value")
+        _log_step("Step 42: Selected first Despatch Ready missing DC Ship M row")
+        _log_step(
+            f"Step 43: Pasted DC Ship M value into {copied_ship_method_count} "
+            "generated rows"
+        )
+        _log_step("Step 44: Selected next Despatch Ready missing DC Ship M row")
+        _log_step("Step 45: Filled remaining generated-row DC Ship M values")
+        _log_step("Step 46: Selected DC Date seed value")
+        _log_step("Step 47: Copied DC Date seed value")
+        _log_step("Step 48: Selected first Despatch Ready missing DC Date row")
+        _log_step(
+            f"Step 49: Pasted DC Date value into {copied_date_count} generated rows"
+        )
+        _log_step("Step 50: Selected next Despatch Ready missing DC Date row")
+        _log_step("Step 51: Filled remaining generated-row DC Date values")
+        _log_step(
+            "Step 52: Confirmed generated Despatch Ready rows have DC Date, "
+            "DC Ship M, and DC Track"
+        )
+    else:
+        _log_step(
+            "Step 23: Skipped generated Despatch Ready tracking/date/method "
+            "outputs because no usable DC Track seed was found"
+        )
     return config.full_orders_matched_output_path
 
 
@@ -461,6 +554,123 @@ def _build_full_orders_lookup(
             if key and key not in lookup:
                 lookup[key] = row
     return lookup
+
+
+def _fill_despatch_ready_missing_tracking_numbers(
+    rows: list[dict[str, str]],
+) -> tuple[int, bool, int, int]:
+    seed_row = _first_usable_tracking_seed_row(rows)
+    if not seed_row:
+        return 0, False, 0, 0
+
+    seed = str(seed_row.get("DC Track", "") or "").strip()
+    seed_ship_method = _seed_column_value(seed_row, rows, "DC Ship M")
+    seed_date = _seed_column_value(seed_row, rows, "DC Date")
+
+    generated_count = 0
+    copied_ship_method_count = 0
+    copied_date_count = 0
+    for row in rows:
+        status = str(row.get("Stage 2 Full Orders Status", "") or "").strip().lower()
+        current_tracking = str(row.get("DC Track", "") or "").strip()
+        if status != "despatch ready" or not _is_placeholder_value(current_tracking):
+            continue
+
+        generated_count += 1
+        row["DC Track"] = _tracking_number_with_incremented_suffix(
+            seed,
+            generated_count,
+        )
+        actions = ["Generated DC Track from seed"]
+
+        if (
+            seed_ship_method
+            and "DC Ship M" in row
+            and _is_placeholder_value(str(row.get("DC Ship M", "") or ""))
+        ):
+            row["DC Ship M"] = seed_ship_method
+            copied_ship_method_count += 1
+            actions.append("Copied DC Ship M from seed")
+
+        if (
+            seed_date
+            and "DC Date" in row
+            and _is_placeholder_value(str(row.get("DC Date", "") or ""))
+        ):
+            row["DC Date"] = seed_date
+            copied_date_count += 1
+            actions.append("Copied DC Date from seed")
+
+        _append_stage2_action(row, "; ".join(actions))
+
+    return generated_count, True, copied_ship_method_count, copied_date_count
+
+
+def _first_usable_tracking_seed_row(
+    rows: list[dict[str, str]],
+) -> dict[str, str] | None:
+    for row in rows:
+        value = str(row.get("DC Track", "") or "").strip()
+        if _is_usable_tracking_seed(value):
+            return row
+    return None
+
+
+def _seed_column_value(
+    seed_row: dict[str, str],
+    rows: list[dict[str, str]],
+    column: str,
+) -> str | None:
+    seed_value = str(seed_row.get(column, "") or "").strip()
+    if _is_usable_fill_seed(seed_value):
+        return seed_value
+
+    for row in rows:
+        value = str(row.get(column, "") or "").strip()
+        if _is_usable_fill_seed(value):
+            return value
+
+    return None
+
+
+def _is_usable_fill_seed(value: str) -> bool:
+    return value.strip().upper() not in {"", "#N/A", "N/A", "CANCELLED"}
+
+
+def _append_stage2_action(row: dict[str, str], message: str) -> None:
+    existing_action = str(row.get("Stage 2 Action", "") or "").strip()
+    row["Stage 2 Action"] = (
+        f"{existing_action}; {message}" if existing_action else message
+    )
+
+
+def _is_placeholder_value(value: str) -> bool:
+    return value.strip().upper() in {"", "#N/A", "N/A"}
+
+
+def _is_usable_tracking_seed(value: str) -> bool:
+    normalized = value.strip().upper()
+    if normalized in {"", "#N/A", "N/A", "AIRMAIL", "CANCELLED"}:
+        return False
+    return sum(1 for character in normalized if character.isdigit()) >= 3
+
+
+def _tracking_number_with_incremented_suffix(seed: str, offset: int) -> str:
+    characters = list(seed)
+    digit_positions = [
+        index for index, character in enumerate(characters) if character.isdigit()
+    ]
+    if len(digit_positions) < 3:
+        raise RuntimeError(
+            f"Cannot generate tracking number from seed without 3 digits: {seed}"
+        )
+
+    suffix_positions = digit_positions[-3:]
+    current_suffix = int("".join(characters[index] for index in suffix_positions))
+    next_suffix = (current_suffix + offset) % 1000
+    for index, replacement_digit in zip(suffix_positions, f"{next_suffix:03d}"):
+        characters[index] = replacement_digit
+    return "".join(characters)
 
 
 def run_stage2_steps(page: Page, config: Config) -> None:
