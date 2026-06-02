@@ -878,10 +878,14 @@ def match_stage1_unmatched_rows_to_full_orders(
         upload_template_rows,
         config.tracking_upload_output_path,
     )
+
+    # Final Rithum/CA upload is intentionally paused. Do not enable an FTP/API
+    # handoff here until the reporting manager has been informed and approved it.
+    # upload_tracking_file_to_rithum(config.tracking_upload_output_path)
     _log_step(
         "Step 171: Saved tracking upload rows as Text (Tab delimited) to "
-        f"{config.tracking_upload_output_path}; ready for FTP to CA/Rithum, "
-        "or a future API upload"
+        f"{config.tracking_upload_output_path}; Rithum/CA upload is paused "
+        "for manager approval"
     )
     return config.tracking_upload_output_path
 

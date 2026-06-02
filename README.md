@@ -79,6 +79,8 @@ downloads/tracking_upload_template.txt
 
 That file is the tab-delimited tracking upload handoff. It is built from the full Stage 1 matched export plus any Stage 2 corrections.
 
+The script currently stops here. It does not upload the file to Rithum/ChannelAdvisor or FTP. The final upload step is intentionally paused until the reporting manager has been informed and has approved the upload.
+
 The interaction between files is:
 
 ```text
@@ -157,9 +159,10 @@ The manual spreadsheet uses formulas and paste-as-values. In Python, those are r
 - Non-cancelled rows are flagged with `Prevent Site Processing = FALSE`.
 - Unknown courier services are written as `#N/A` and listed in `UNMAPPED_COURIER_SERVICES_OUTPUT_PATH`.
 - The final upload rows are reviewed with filters cleared and `Prevent Site Processing` filled for all rows.
-- The manual save step is represented as a tab-delimited upload handoff, ready for the CA/Rithum FTP process or a future API upload.
+- The manual save step is represented as a tab-delimited upload handoff only.
+- The CA/Rithum FTP or API upload is intentionally paused until manager approval is confirmed.
 
-The final manual steps save the completed template into the `CA Tracking Update\Out` folder as `Text (Tab delimited)`. The script now writes the same tab-delimited upload handoff to `TRACKING_UPLOAD_OUTPUT_PATH`. By default this is:
+The final manual steps save the completed template into the `CA Tracking Update\Out` folder as `Text (Tab delimited)`. The script now writes the same tab-delimited upload handoff to `TRACKING_UPLOAD_OUTPUT_PATH`, but does not upload it. By default this is:
 
 ```text
 downloads/tracking_upload_template.txt
@@ -307,5 +310,5 @@ The scripts print completed steps as they run. Rithum orders are saved to `downl
 
 Planned next steps:
 
-1. Add FTP upload or Rithum API upload once the handoff method is confirmed.
+1. Add FTP upload or Rithum API upload only after manager approval and the handoff method are confirmed.
 2. Add any missing courier mappings to `courier_conversions.json`.
