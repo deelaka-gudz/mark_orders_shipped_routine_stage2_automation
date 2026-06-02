@@ -301,10 +301,24 @@ python automation_stage02.py
 
 The scripts print completed steps as they run. Rithum orders are saved to `downloads/rithum_orders.csv` by default. Helm report downloads are saved to `downloads/` by default.
 
+## Streamlit Dashboard
+
+The scripts can also be run from a local Streamlit dashboard:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+streamlit run app.py
+```
+
+The dashboard provides one button to run Stage 1 and then Stage 2 with the same Python environment. It streams the script logs, shows the current stage, current step, uptime, generated files, and download buttons for the final tab-delimited tracking upload handoff and unmapped courier review file.
+
+The dashboard still respects the upload pause. It only generates `downloads/tracking_upload_template.txt`; it does not upload to Rithum/ChannelAdvisor or FTP.
+
 ## Current Script Map
 
 - `automation_stage01.py`: Helm login, Shipping Report download, Rithum/order matching, non-GB review outputs.
 - `automation_stage02.py`: Full Orders Report download, Stage 2 matching, cancelled/despatch-ready handling, full Stage 1 merge, and tab-delimited tracking upload preparation.
+- `app.py`: local operator dashboard for running both automation stages and downloading the generated handoff file.
 
 ## Next Stages
 

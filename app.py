@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+import streamlit as st
+
+ROOT = Path(__file__).resolve().parent
+DOWNLOADS_DIR = ROOT / "downloads"
+FINAL_OUTPUT_PATH = DOWNLOADS_DIR / "tracking_upload_template.txt"
+UNMAPPED_COURIERS_PATH = DOWNLOADS_DIR / "unmapped_courier_services.csv"
+
+STAGE_SCRIPTS = [
+    ("Stage 1", ROOT / "automation_stage01.py"),
+    ("Stage 2", ROOT / "automation_stage02.py"),
+]
+
+LOG_PREFIX_RE = re.compile(r"^\[(?P<level>[A-Z]+)\]\s*(?P<message>.*)$")
+STEP_RE = re.compile(r"(Step\s+[0-9]+(?:\.[0-9]+)*[^:]*)")
+
+
+@dataclass
+class StageResult:
+    name: str
+    return_code: int
+    logs: list[str]
+    elapsed_seconds: float
+
+
+def format_duration(seconds: float) -> str:
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def parse_log_line(line: str) -> tuple[str, str, str]:
+    match = LOG_PREFIX_RE.match(line)
+    if match:
+        level = match.group("level")
+        message = match.group("message")
+    else:
+        level = "LOG"
+        message = line
+
+    step_match = STEP_RE.search(message)
+    step = step_match.group(1) if step_match else ""
+    return level, step, message
+
+
+def run_stage(
+    stage_name: str,
+    script_path: Path,
+    log_lines: list[str],
+    stage_status,
+    step_status,
+    uptime_status,
+    log_box,
+) -> StageResult:
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+
+    stage_start = time.monotonic()
+    stage_status.info(f"{stage_name} running")
+    step_status.info("Waiting for first log line...")
+
+    process = subprocess.Popen(
+        [sys.executable, str(script_path)],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+    )
+
+    stage_logs: list[str] = []
+
+    assert process.stdout is not None
+    for raw_line in process.stdout:
+        line = raw_line.rstrip()
+        if not line:
+            continue
+
+        elapsed = time.monotonic() - stage_start
+        level, step, message = parse_log_line(line)
+        formatted_line = f"{stage_name} | {line}"
+
+        stage_logs.append(line)
+        log_lines.append(formatted_line)
+
+        stage_status.info(f"{stage_name} running")
+        if step:
+            step_status.info(f"{step}: {message}")
+        else:
+            step_status.info(message)
+        uptime_status.metric("Current stage uptime", format_duration(elapsed))
+        log_box.code("\n".join(log_lines[-250:]), language="text")
+
+        if level == "WARN":
+            st.toast(message)
+
+    return_code = process.wait()
+    elapsed_seconds = time.monotonic() - stage_start
+
+    if return_code == 0:
+        stage_status.success(
+            f"{stage_name} completed in {format_duration(elapsed_seconds)}"
+        )
+    else:
+        stage_status.error(
+            f"{stage_name} failed after {format_duration(elapsed_seconds)}"
+        )
+
+    return StageResult(stage_name, return_code, stage_logs, elapsed_seconds)
+
+
+def generated_files() -> list[Path]:
+    if not DOWNLOADS_DIR.exists():
+        return []
+    return sorted(
+        [path for path in DOWNLOADS_DIR.iterdir() if path.is_file()],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def render_generated_files() -> None:
+    st.subheader("Generated Files")
+    files = generated_files()
+    if not files:
+        st.caption("No files found in downloads yet.")
+        return
+
+    rows = []
+    for path in files:
+        stat = path.stat()
+        rows.append(
+            {
+                "file": path.name,
+                "size_kb": round(stat.st_size / 1024, 1),
+                "modified": time.strftime(
+                    "%Y-%m-%d %H:%M:%S",
+                    time.localtime(stat.st_mtime),
+                ),
+            }
+        )
+    st.dataframe(rows, hide_index=True, use_container_width=True)
+
+
+def render_downloads() -> None:
+    st.subheader("Final Output")
+    if FINAL_OUTPUT_PATH.exists():
+        st.success(f"Final output ready: {FINAL_OUTPUT_PATH}")
+        st.download_button(
+            "Download tracking upload file",
+            data=FINAL_OUTPUT_PATH.read_bytes(),
+            file_name=FINAL_OUTPUT_PATH.name,
+            mime="text/plain",
+        )
+    else:
+        st.info("Final output is not available yet. Click 'Click to Start' first.")
+
+    if UNMAPPED_COURIERS_PATH.exists() and UNMAPPED_COURIERS_PATH.stat().st_size > 0:
+        st.warning(
+            "Unmapped courier review file exists. Check it before using the final output."
+        )
+        st.download_button(
+            "Download unmapped courier review",
+            data=UNMAPPED_COURIERS_PATH.read_bytes(),
+            file_name=UNMAPPED_COURIERS_PATH.name,
+            mime="text/csv",
+        )
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="Mark Orders Shipped Automation",
+        layout="wide",
+    )
+
+    st.title("Mark Orders Shipped Automation")
+    st.caption(
+        "Generates the final upload handoff file."
+    )
+
+    st.warning(
+        "Rithum/CA upload is disabled. This dashboard only generates the final tab-delimited output file."
+    )
+
+    left, right = st.columns([2, 1])
+
+    with right:
+        st.subheader("Run Controls")
+        run_button = st.button(
+            "Click to Start", type="primary", use_container_width=True
+        )
+        st.caption("Keep this browser tab open while the automation is running.")
+        render_downloads()
+        render_generated_files()
+
+    with left:
+        st.subheader("Run Status")
+        workflow_status = st.empty()
+        stage_status = st.empty()
+        step_status = st.empty()
+        uptime_status = st.empty()
+        log_box = st.empty()
+
+        if not run_button:
+            workflow_status.info("Idle")
+            step_status.info("No run started yet.")
+            log_box.code(
+                "Logs will appear here after you start a run.", language="text"
+            )
+            return
+
+        workflow_start = time.monotonic()
+        log_lines: list[str] = []
+        results: list[StageResult] = []
+
+        workflow_status.info("Automation running")
+
+        for stage_name, script_path in STAGE_SCRIPTS:
+            result = run_stage(
+                stage_name,
+                script_path,
+                log_lines,
+                stage_status,
+                step_status,
+                uptime_status,
+                log_box,
+            )
+            results.append(result)
+            if result.return_code != 0:
+                workflow_status.error(f"Stopped because {stage_name} failed.")
+                break
+        else:
+            total_elapsed = time.monotonic() - workflow_start
+            workflow_status.success(
+                f"Stage 1 + Stage 2 completed in {format_duration(total_elapsed)}"
+            )
+            uptime_status.metric("Total uptime", format_duration(total_elapsed))
+
+        with st.expander("Run Summary", expanded=True):
+            for result in results:
+                status = "completed" if result.return_code == 0 else "failed"
+                st.write(
+                    f"{result.name}: {status} in {format_duration(result.elapsed_seconds)}"
+                )
+
+        render_downloads()
+
+
+if __name__ == "__main__":
+    main()
