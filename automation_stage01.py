@@ -353,7 +353,9 @@ class Config:
             helm_manual_login_timeout_seconds=int(
                 os.getenv("HELM_MANUAL_LOGIN_TIMEOUT_SECONDS") or "300"
             ),
-            headless=_env_flag("AUTOMATION_HEADLESS", default=_env_flag("HEADLESS", default=False)),
+            headless=_env_flag(
+                "AUTOMATION_HEADLESS", default=_env_flag("HEADLESS", default=False)
+            ),
             debug=_env_flag("DEBUG", default=False),
         )
 
@@ -747,9 +749,14 @@ def open_shipping_reports_section(page: Page) -> None:
 def download_shipping_report(page: Page, config: Config) -> Path:
     config.download_dir.mkdir(parents=True, exist_ok=True)
 
+    requested_after_ms = int(time.time() * 1000)
     request_shipping_report_export(page, config)
 
-    return download_completed_shipping_report_from_history(page, config)
+    return download_completed_shipping_report_from_history(
+        page,
+        config,
+        requested_after_ms,
+    )
 
 
 def request_shipping_report_export(page: Page, config: Config) -> None:
@@ -853,15 +860,21 @@ def _save_download(download, download_dir: Path) -> Path:
 def download_completed_shipping_report_from_history(
     page: Page,
     config: Config,
+    requested_after_ms: int,
 ) -> Path:
-    _log_step("Step 3.2.3: Check newest Shipping Report status in Export History")
+    user_hint = _helm_history_user_hint(config.email)
+    _log_step(
+        "Step 3.2.3: Check newly requested Shipping Report status in Export History"
+    )
     deadline = time.monotonic() + config.helm_report_ready_timeout_seconds
     last_logged_status: str | None = None
     retry_count = 0
     max_retries = 3
+    not_found_refresh_count = 0
+    max_not_found_refreshes = 5
 
     while time.monotonic() < deadline:
-        status = _latest_shipping_report_status(page)
+        status = _latest_shipping_report_status(page, user_hint, requested_after_ms)
         normalized_status = (status or "not found").strip()
         elapsed_seconds = int(
             config.helm_report_ready_timeout_seconds
@@ -875,11 +888,28 @@ def download_completed_shipping_report_from_history(
                 f"(elapsed {elapsed_seconds}s)."
             )
             last_logged_status = normalized_status
+
+        if normalized_status.lower() == "not found":
+            not_found_refresh_count += 1
+            if not_found_refresh_count > max_not_found_refreshes:
+                print(
+                    "[WARN] Step 3.2.4: No Shipping Report row for this user/request "
+                    f"was found after {max_not_found_refreshes} refresh checks. "
+                    "Requesting a fresh export."
+                )
+                requested_after_ms = int(time.time() * 1000)
+                request_shipping_report_export(page, config)
+                not_found_refresh_count = 0
+                last_logged_status = None
+                continue
+        else:
+            not_found_refresh_count = 0
+
         if normalized_status.lower() in {"cancelled", "failed"}:
             if retry_count >= max_retries:
                 raise RuntimeError(
-                    f"Latest Shipping Report status is '{normalized_status}' after "
-                    f"{retry_count} retry attempts."
+                    "Requested Shipping Report status is "
+                    f"'{normalized_status}' after {retry_count} retry attempts."
                 )
             retry_count += 1
             print(
@@ -887,12 +917,17 @@ def download_completed_shipping_report_from_history(
                 f"'{normalized_status}'. Requesting a fresh export "
                 f"(attempt {retry_count}/{max_retries})."
             )
+            requested_after_ms = int(time.time() * 1000)
             request_shipping_report_export(page, config)
             last_logged_status = None
             continue
         if status and status.lower() == "completed":
             _log_step("Step 3.2.5: Shipping Report is completed and ready to download")
-            download_url = _latest_shipping_report_download_url(page)
+            download_url = _latest_shipping_report_download_url(
+                page,
+                user_hint,
+                requested_after_ms,
+            )
             if download_url:
                 downloaded_path = _download_helm_export_url(
                     page, download_url, config.download_dir
@@ -901,10 +936,14 @@ def download_completed_shipping_report_from_history(
                 return downloaded_path
 
             with page.expect_download(timeout=60000) as download_info:
-                if not _click_latest_shipping_report_download(page):
+                if not _click_latest_shipping_report_download(
+                    page,
+                    user_hint,
+                    requested_after_ms,
+                ):
                     raise RuntimeError(
-                        "Latest Shipping Report is completed, but no download URL or "
-                        "download action button/link was found."
+                        "Requested Shipping Report is completed, but no download URL "
+                        "or download action button/link was found."
                     )
             downloaded_path = _save_download(download_info.value, config.download_dir)
             _log_step("Step 3.2.6: Downloaded Shipping Report using History button")
@@ -919,28 +958,73 @@ def download_completed_shipping_report_from_history(
     )
 
 
-def _latest_shipping_report_status(page: Page) -> str | None:
-    return page.evaluate("""() => {
-            const rows = Array.from(document.querySelectorAll('tbody tr, tr'));
-            const row = rows.find(el => {
-                const cells = Array.from(el.querySelectorAll('td'));
-                return cells.length >= 8 && /^Shipping Report$/i.test(cells[1].innerText.trim());
-            });
+def _helm_history_user_hint(email: str) -> str:
+    local_part = email.split("@", 1)[0].strip().lower()
+    return re.split(r"[._+\-]", local_part, maxsplit=1)[0] or local_part
+
+
+def _latest_shipping_report_status(
+    page: Page,
+    user_hint: str,
+    requested_after_ms: int,
+) -> str | None:
+    return page.evaluate(
+        """({userHint, requestedAfterMs}) => {
+            const row = findRequestedHistoryRow('Shipping Report', userHint, requestedAfterMs);
             if (!row) return null;
             const cells = Array.from(row.querySelectorAll('td'));
             return cells[3]?.innerText.trim() || null;
-        }""")
+
+            function findRequestedHistoryRow(reportType, userHint, requestedAfterMs) {
+                const rows = Array.from(document.querySelectorAll('tbody tr, tr'));
+                return rows.find(el => {
+                    const cells = Array.from(el.querySelectorAll('td'));
+                    if (cells.length < 8) return false;
+                    const type = cells[1]?.innerText.trim() || '';
+                    const user = (cells[2]?.innerText.trim() || '').toLowerCase();
+                    const started = cells[5]?.innerText.trim() || '';
+                    const created = cells[4]?.innerText.trim() || '';
+                    return new RegExp(`^${reportType}$`, 'i').test(type)
+                        && (!userHint || user.includes(userHint.toLowerCase()))
+                        && historyTimeIsAfter(started || created, requestedAfterMs);
+                });
+            }
+
+            function historyTimeIsAfter(rawValue, requestedAfterMs) {
+                const parsed = parseHistoryTime(rawValue);
+                return parsed !== null && parsed >= requestedAfterMs - 120000;
+            }
+
+            function parseHistoryTime(rawValue) {
+                const text = (rawValue || '').replace(/\\s+/g, ' ').trim();
+                if (!text) return null;
+                const nativeParsed = Date.parse(text);
+                if (!Number.isNaN(nativeParsed)) return nativeParsed;
+                const match = text.match(/^(\\d{1,2})\\s+([A-Za-z]{3,})\\s+(\\d{4})\\s+(\\d{1,2}):(\\d{2})\\s*(AM|PM)?$/i);
+                if (!match) return null;
+                const months = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+                const month = months[match[2].slice(0, 3).toLowerCase()];
+                if (month === undefined) return null;
+                let hour = Number(match[4]);
+                const ampm = (match[6] || '').toUpperCase();
+                if (ampm === 'PM' && hour < 12) hour += 12;
+                if (ampm === 'AM' && hour === 12) hour = 0;
+                return new Date(Number(match[3]), month, Number(match[1]), hour, Number(match[5])).getTime();
+            }
+        }""",
+        {"userHint": user_hint, "requestedAfterMs": requested_after_ms},
+    )
 
 
-def _latest_shipping_report_download_url(page: Page) -> str | None:
-    return page.evaluate("""() => {
-            const rows = Array.from(document.querySelectorAll('tbody tr, tr'));
-            const row = rows.find(el => {
-                const cells = Array.from(el.querySelectorAll('td'));
-                return cells.length >= 8 && /^Shipping Report$/i.test(cells[1].innerText.trim());
-            });
+def _latest_shipping_report_download_url(
+    page: Page,
+    user_hint: str,
+    requested_after_ms: int,
+) -> str | None:
+    return page.evaluate(
+        """({userHint, requestedAfterMs}) => {
+            const row = findRequestedHistoryRow('Shipping Report', userHint, requestedAfterMs);
             if (!row) return null;
-
             const cells = Array.from(row.querySelectorAll('td'));
             if (!/^Completed$/i.test(cells[3]?.innerText.trim() || '')) return null;
 
@@ -950,7 +1034,46 @@ def _latest_shipping_report_download_url(page: Page) -> str | None:
                 "td:last-child a[download][href*='/shipping-']"
             );
             return link?.href || null;
-        }""")
+
+            function findRequestedHistoryRow(reportType, userHint, requestedAfterMs) {
+                const rows = Array.from(document.querySelectorAll('tbody tr, tr'));
+                return rows.find(el => {
+                    const cells = Array.from(el.querySelectorAll('td'));
+                    if (cells.length < 8) return false;
+                    const type = cells[1]?.innerText.trim() || '';
+                    const user = (cells[2]?.innerText.trim() || '').toLowerCase();
+                    const started = cells[5]?.innerText.trim() || '';
+                    const created = cells[4]?.innerText.trim() || '';
+                    return new RegExp(`^${reportType}$`, 'i').test(type)
+                        && (!userHint || user.includes(userHint.toLowerCase()))
+                        && historyTimeIsAfter(started || created, requestedAfterMs);
+                });
+            }
+
+            function historyTimeIsAfter(rawValue, requestedAfterMs) {
+                const parsed = parseHistoryTime(rawValue);
+                return parsed !== null && parsed >= requestedAfterMs - 120000;
+            }
+
+            function parseHistoryTime(rawValue) {
+                const text = (rawValue || '').replace(/\\s+/g, ' ').trim();
+                if (!text) return null;
+                const nativeParsed = Date.parse(text);
+                if (!Number.isNaN(nativeParsed)) return nativeParsed;
+                const match = text.match(/^(\\d{1,2})\\s+([A-Za-z]{3,})\\s+(\\d{4})\\s+(\\d{1,2}):(\\d{2})\\s*(AM|PM)?$/i);
+                if (!match) return null;
+                const months = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+                const month = months[match[2].slice(0, 3).toLowerCase()];
+                if (month === undefined) return null;
+                let hour = Number(match[4]);
+                const ampm = (match[6] || '').toUpperCase();
+                if (ampm === 'PM' && hour < 12) hour += 12;
+                if (ampm === 'AM' && hour === 12) hour = 0;
+                return new Date(Number(match[3]), month, Number(match[1]), hour, Number(match[5])).getTime();
+            }
+        }""",
+        {"userHint": user_hint, "requestedAfterMs": requested_after_ms},
+    )
 
 
 def _download_helm_export_url(
@@ -969,13 +1092,15 @@ def _download_helm_export_url(
     return target_path
 
 
-def _click_latest_shipping_report_download(page: Page) -> bool:
-    return bool(page.evaluate("""() => {
-                const rows = Array.from(document.querySelectorAll('tbody tr, tr'));
-                const row = rows.find(el => {
-                    const cells = Array.from(el.querySelectorAll('td'));
-                    return cells.length >= 8 && /^Shipping Report$/i.test(cells[1].innerText.trim());
-                });
+def _click_latest_shipping_report_download(
+    page: Page,
+    user_hint: str,
+    requested_after_ms: int,
+) -> bool:
+    return bool(
+        page.evaluate(
+            """({userHint, requestedAfterMs}) => {
+                const row = findRequestedHistoryRow('Shipping Report', userHint, requestedAfterMs);
                 if (!row) return false;
 
                 const cells = Array.from(row.querySelectorAll('td'));
@@ -991,7 +1116,47 @@ def _click_latest_shipping_report_download(page: Page) -> bool:
                 action.scrollIntoView({block: 'center', inline: 'center'});
                 action.click();
                 return true;
-            }"""))
+
+                function findRequestedHistoryRow(reportType, userHint, requestedAfterMs) {
+                    const rows = Array.from(document.querySelectorAll('tbody tr, tr'));
+                    return rows.find(el => {
+                        const cells = Array.from(el.querySelectorAll('td'));
+                        if (cells.length < 8) return false;
+                        const type = cells[1]?.innerText.trim() || '';
+                        const user = (cells[2]?.innerText.trim() || '').toLowerCase();
+                        const started = cells[5]?.innerText.trim() || '';
+                        const created = cells[4]?.innerText.trim() || '';
+                        return new RegExp(`^${reportType}$`, 'i').test(type)
+                            && (!userHint || user.includes(userHint.toLowerCase()))
+                            && historyTimeIsAfter(started || created, requestedAfterMs);
+                    });
+                }
+
+                function historyTimeIsAfter(rawValue, requestedAfterMs) {
+                    const parsed = parseHistoryTime(rawValue);
+                    return parsed !== null && parsed >= requestedAfterMs - 120000;
+                }
+
+                function parseHistoryTime(rawValue) {
+                    const text = (rawValue || '').replace(/\\s+/g, ' ').trim();
+                    if (!text) return null;
+                    const nativeParsed = Date.parse(text);
+                    if (!Number.isNaN(nativeParsed)) return nativeParsed;
+                    const match = text.match(/^(\\d{1,2})\\s+([A-Za-z]{3,})\\s+(\\d{4})\\s+(\\d{1,2}):(\\d{2})\\s*(AM|PM)?$/i);
+                    if (!match) return null;
+                    const months = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+                    const month = months[match[2].slice(0, 3).toLowerCase()];
+                    if (month === undefined) return null;
+                    let hour = Number(match[4]);
+                    const ampm = (match[6] || '').toUpperCase();
+                    if (ampm === 'PM' && hour < 12) hour += 12;
+                    if (ampm === 'AM' && hour === 12) hour = 0;
+                    return new Date(Number(match[3]), month, Number(match[1]), hour, Number(match[5])).getTime();
+                }
+            }""",
+            {"userHint": user_hint, "requestedAfterMs": requested_after_ms},
+        )
+    )
 
 
 def run(config: Config) -> None:
