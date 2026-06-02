@@ -338,7 +338,7 @@ class Config:
                 or "Order ID"
             ).strip(),
             shipping_country_column=(
-                os.getenv("SHIPPING_COUNTRY_COLUMN") or "Shipping Country"
+                os.getenv("SHIPPING_COUNTRY_COLUMN") or "ShippingCountry"
             ).strip(),
             helm_report_ready_timeout_seconds=int(
                 os.getenv("HELM_REPORT_READY_TIMEOUT_SECONDS") or "900"
@@ -596,6 +596,13 @@ def match_order_file_to_dc_shipping_report(config: Config) -> Path | None:
     _log_step("Step 16: Collapsed duplicate DC rows by order ID")
     _log_step("Step 17: Joined multiple tracking numbers where needed")
     _log_step("Step 18: Marked each order as matched or not matched")
+    multiple_dc_row_count = count_rows_with_multiple_dc_rows(matched_rows)
+    if multiple_dc_row_count:
+        _log_step(
+            f"Warning: {multiple_dc_row_count} orders matched multiple DC Shipping "
+            "Report rows. Tracking values may be joined with ' | ' and should be "
+            "reviewed before the final Rithum upload."
+        )
     _log_step("Step 19: Prepared final matched CSV rows")
     _write_dict_rows(config.matched_output_path, matched_rows)
     _log_step("Step 20: Saved matched output CSV")
@@ -645,11 +652,18 @@ def match_order_file_to_dc_shipping_report(config: Config) -> Path | None:
     )
 
     non_gb_unmatched_rows = filter_rows_with_placeholder_dc_date(non_gb_rows)
+    non_gb_no_dc_match_count = count_rows_without_dc_match(non_gb_rows)
     _log_step("Step 52: Selected #N/A values in DC Date filter")
     _write_dict_rows(config.non_gb_unmatched_output_path, non_gb_unmatched_rows)
     _log_step(
         f"Step 53: Saved {len(non_gb_unmatched_rows)} non-GB unmatched rows for review"
     )
+    if non_gb_no_dc_match_count:
+        _log_step(
+            f"Warning: {non_gb_no_dc_match_count} non-GB rows have no DC Shipping "
+            "Report match. Stage 2 will try to correct them from the Full Orders "
+            "Report; any unresolved rows may create incomplete final upload fields."
+        )
     return config.matched_output_path
 
 
@@ -657,10 +671,14 @@ def apply_airmail_defaults(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     output_rows: list[dict[str, Any]] = []
     for row in rows:
         output_row = dict(row)
-        for column in ("DC Date", "DC Ship M", "DC Track"):
-            value = str(output_row.get(column, "") or "").strip()
-            if not value or value.upper() == "#N/A":
-                output_row[column] = "Airmail"
+        matched_status = str(
+            output_row.get("Matched In DC Shipping Report", "") or ""
+        ).strip()
+        if matched_status.upper() == "NO":
+            for column in ("DC Date", "DC Ship M", "DC Track"):
+                value = str(output_row.get(column, "") or "").strip()
+                if not value or value.upper() == "#N/A":
+                    output_row[column] = "Airmail"
         output_rows.append(output_row)
     return output_rows
 
@@ -677,12 +695,33 @@ def filter_rows_with_real_dc_date(rows: list[dict[str, Any]]) -> list[dict[str, 
 def filter_rows_with_placeholder_dc_date(
     rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    placeholders = {"", "#N/A"}
+    placeholders = {"", "#N/A", "0000-00-00 00:00:00"}
     return [
         row
         for row in rows
         if str(row.get("DC Date", "") or "").strip().upper() in placeholders
     ]
+
+
+def count_rows_without_dc_match(rows: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for row in rows
+        if str(row.get("Matched In DC Shipping Report", "") or "").strip().upper()
+        == "NO"
+    )
+
+
+def count_rows_with_multiple_dc_rows(rows: list[dict[str, Any]]) -> int:
+    count = 0
+    for row in rows:
+        try:
+            dc_row_count = int(str(row.get("DC Row Count", "") or "0").strip())
+        except ValueError:
+            dc_row_count = 0
+        if dc_row_count > 1:
+            count += 1
+    return count
 
 
 def filter_non_gb_rows(
@@ -692,7 +731,14 @@ def filter_non_gb_rows(
     if not matched_rows:
         return []
 
-    if shipping_country_column not in matched_rows[0]:
+    selected_country_column = shipping_country_column
+    if selected_country_column not in matched_rows[0]:
+        for fallback_column in ("ShippingCountry", "Shipping Country"):
+            if fallback_column in matched_rows[0]:
+                selected_country_column = fallback_column
+                break
+
+    if selected_country_column not in matched_rows[0]:
         candidates = [
             column
             for column in matched_rows[0].keys()
@@ -707,7 +753,7 @@ def filter_non_gb_rows(
     return [
         row
         for row in matched_rows
-        if _normalized_country(row.get(shipping_country_column)) != "GB"
+        if _normalized_country(row.get(selected_country_column)) != "GB"
     ]
 
 
