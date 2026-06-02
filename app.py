@@ -240,6 +240,8 @@ def main() -> None:
         page_title="Mark Orders Shipped Automation",
         layout="wide",
     )
+    if "automation_running" not in st.session_state:
+        st.session_state.automation_running = False
 
     st.title("Mark Orders Shipped Automation")
     st.caption(
@@ -254,8 +256,13 @@ def main() -> None:
 
     with right:
         st.subheader("Run Controls")
-        run_button = st.button(
-            "Click to Start", type="primary", use_container_width=True
+        run_button_slot = st.empty()
+        run_button = run_button_slot.button(
+            "Running..." if st.session_state.automation_running else "Click to Start",
+            type="primary",
+            use_container_width=True,
+            disabled=st.session_state.automation_running,
+            key="start_automation_button",
         )
         st.caption("Keep this browser tab open while the automation is running.")
         render_downloads()
@@ -277,32 +284,51 @@ def main() -> None:
             )
             return
 
+        st.session_state.automation_running = True
+        run_button_slot.button(
+            "Running...",
+            type="primary",
+            use_container_width=True,
+            disabled=True,
+            key="running_automation_button",
+        )
+
         workflow_start = time.monotonic()
         log_lines: list[str] = []
         results: list[StageResult] = []
 
         workflow_status.info("Automation running")
 
-        for stage_name, script_path in STAGE_SCRIPTS:
-            result = run_stage(
-                stage_name,
-                script_path,
-                log_lines,
-                stage_status,
-                step_status,
-                uptime_status,
-                log_box,
+        try:
+            for stage_name, script_path in STAGE_SCRIPTS:
+                result = run_stage(
+                    stage_name,
+                    script_path,
+                    log_lines,
+                    stage_status,
+                    step_status,
+                    uptime_status,
+                    log_box,
+                )
+                results.append(result)
+                if result.return_code != 0:
+                    workflow_status.error(f"Stopped because {stage_name} failed.")
+                    break
+            else:
+                total_elapsed = time.monotonic() - workflow_start
+                workflow_status.success(
+                    f"Stage 1 + Stage 2 completed in {format_duration(total_elapsed)}"
+                )
+                uptime_status.metric("Total uptime", format_duration(total_elapsed))
+        finally:
+            st.session_state.automation_running = False
+            run_button_slot.button(
+                "Click to Start",
+                type="primary",
+                use_container_width=True,
+                disabled=False,
+                key="restart_automation_button",
             )
-            results.append(result)
-            if result.return_code != 0:
-                workflow_status.error(f"Stopped because {stage_name} failed.")
-                break
-        else:
-            total_elapsed = time.monotonic() - workflow_start
-            workflow_status.success(
-                f"Stage 1 + Stage 2 completed in {format_duration(total_elapsed)}"
-            )
-            uptime_status.metric("Total uptime", format_duration(total_elapsed))
 
         with st.expander("Run Summary", expanded=True):
             for result in results:
