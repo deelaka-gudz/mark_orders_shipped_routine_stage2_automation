@@ -1,3 +1,4 @@
+import csv
 import os
 import time
 from dataclasses import dataclass
@@ -24,7 +25,7 @@ from automation_stage01 import (
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 
 TRACKING_UPLOAD_TEMPLATE_COLUMNS = [
-    "Site Order ID",
+    "Invoice No",
     "Tracking Number",
     "Date Shipped",
     "Shipping Carrier Source",
@@ -36,12 +37,18 @@ TRACKING_UPLOAD_TEMPLATE_COLUMNS = [
 COURIER_CONVERSIONS = {
     "Evri 24 Non POD": ("Evri", "Evri 24"),
     "Evri 48": ("Evri", "Evri 48"),
+    "Evri 48 Non POD": ("Evri", "Evri 48"),
+    "Evri Next Day Contract Rate": ("Evri", "Evri 24"),
     "Evri DDP NON POD": ("Evri", "International"),
     "RMCD Tracked 24 (TPN24) - No Signature": (
         "Royal Mail",
         "Royal Mail Tracked 24",
     ),
     "RMCD Tracked 48 (TPS48) - No Signature": (
+        "Royal Mail",
+        "Royal Mail Tracked 48",
+    ),
+    "RMCD Tracked 48 (TPS48)- No Signature": (
         "Royal Mail",
         "Royal Mail Tracked 48",
     ),
@@ -86,8 +93,10 @@ class Config:
     email: str
     password: str
     download_dir: Path
+    matched_output_path: Path
     non_gb_unmatched_output_path: Path
     full_orders_matched_output_path: Path
+    tracking_upload_output_path: Path
     full_orders_match_key_column: str
     full_orders_report_key_column: str
     helm_report_ready_timeout_seconds: int
@@ -107,6 +116,9 @@ class Config:
             email=_require_env("HELM_EMAIL").strip(),
             password=_require_env("HELM_PASSWORD"),
             download_dir=Path(os.getenv("HELM_REPORT_DOWNLOAD_DIR") or "downloads"),
+            matched_output_path=Path(
+                os.getenv("MATCHED_OUTPUT_PATH") or "downloads/matched_orders.csv"
+            ),
             non_gb_unmatched_output_path=Path(
                 os.getenv("NON_GB_UNMATCHED_OUTPUT_PATH")
                 or "downloads/non_gb_unmatched_orders_review.csv"
@@ -114,6 +126,10 @@ class Config:
             full_orders_matched_output_path=Path(
                 os.getenv("FULL_ORDERS_MATCHED_OUTPUT_PATH")
                 or "downloads/stage2_full_orders_matched.csv"
+            ),
+            tracking_upload_output_path=Path(
+                os.getenv("TRACKING_UPLOAD_OUTPUT_PATH")
+                or "downloads/tracking_upload_template.txt"
             ),
             full_orders_match_key_column=(
                 os.getenv("FULL_ORDERS_MATCH_KEY_COLUMN") or "SiteOrderID"
@@ -398,7 +414,28 @@ def match_stage1_unmatched_rows_to_full_orders(
             f"[INFO] Expected Stage 1 unmatched file at "
             f"{config.non_gb_unmatched_output_path}"
         )
-        return None
+        if not config.matched_output_path.exists():
+            return None
+
+        upload_template_rows = build_tracking_upload_template_rows(
+            merge_stage2_rows_into_stage1_matched_rows(
+                config.matched_output_path,
+                [],
+                config.full_orders_match_key_column,
+            )
+        )
+        remove_shipping_carrier_source_column(upload_template_rows)
+        apply_prevent_site_processing_flags(upload_template_rows)
+        write_tracking_upload_template_file(
+            upload_template_rows,
+            config.tracking_upload_output_path,
+        )
+        _log_step(
+            "Step 171: Saved tracking upload rows as Text (Tab delimited) to "
+            f"{config.tracking_upload_output_path}; Stage 1 unmatched review file "
+            "was not present"
+        )
+        return config.tracking_upload_output_path
 
     _log_step("Step 4: Read Full Orders Report and Stage 1 unmatched rows")
     unmatched_rows = _read_csv(config.non_gb_unmatched_output_path)
@@ -410,7 +447,24 @@ def match_stage1_unmatched_rows_to_full_orders(
     if not unmatched_rows:
         _write_dict_rows(config.full_orders_matched_output_path, [])
         _log_step("Step 10: No Stage 1 unmatched rows to match against Full Orders")
-        return config.full_orders_matched_output_path
+        upload_template_rows = build_tracking_upload_template_rows(
+            merge_stage2_rows_into_stage1_matched_rows(
+                config.matched_output_path,
+                [],
+                config.full_orders_match_key_column,
+            )
+        )
+        remove_shipping_carrier_source_column(upload_template_rows)
+        apply_prevent_site_processing_flags(upload_template_rows)
+        write_tracking_upload_template_file(
+            upload_template_rows,
+            config.tracking_upload_output_path,
+        )
+        _log_step(
+            "Step 171: Saved tracking upload rows as Text (Tab delimited) to "
+            f"{config.tracking_upload_output_path}; no Stage 2 corrections were needed"
+        )
+        return config.tracking_upload_output_path
 
     unmatched_key_column = _resolve_column(
         unmatched_rows[0],
@@ -559,12 +613,22 @@ def match_stage1_unmatched_rows_to_full_orders(
             "outputs because no usable DC Track seed was found"
         )
 
-    upload_template_rows = build_tracking_upload_template_rows(matched_rows)
+    upload_source_rows = merge_stage2_rows_into_stage1_matched_rows(
+        config.matched_output_path,
+        matched_rows,
+        unmatched_key_column,
+    )
+    _log_step(
+        "Step 52.1: Merged Stage 2 corrections back into full Stage 1 matched "
+        f"export for {len(upload_source_rows)} upload source rows"
+    )
+
+    upload_template_rows = build_tracking_upload_template_rows(upload_source_rows)
     _log_step("Step 53: Click Horizontal equivalent")
     _log_step("Step 54: Selected column A equivalent")
-    _log_step("Step 55: Selected A1 template header equivalent")
-    _log_step("Step 56: Selected first Site Order ID value equivalent")
-    _log_step("Step 57: Copied first Site Order ID value equivalent")
+    _log_step("Step 55: Selected A1 Invoice No template header equivalent")
+    _log_step("Step 56: Selected first Invoice No source value equivalent")
+    _log_step("Step 57: Copied first Invoice No source value equivalent")
     _log_step("Step 58: Copied prepared tracking rows")
     _log_step("Step 59: Switched to tracking upload template equivalent")
     _log_step(
@@ -575,8 +639,8 @@ def match_stage1_unmatched_rows_to_full_orders(
     _log_step("Step 61: Selected A2 in tracking upload template equivalent")
     _log_step(
         "Step 62: Pasted "
-        f"{_count_template_values(upload_template_rows, 'Site Order ID')} "
-        "Site Order ID values into template column A"
+        f"{_count_template_values(upload_template_rows, 'Invoice No')} "
+        "Invoice No values into template column A"
     )
     _log_step("Step 63: Selected B1 Tracking Number template column")
     _log_step("Step 64: Switched back to prepared Stage 2 rows equivalent")
@@ -731,11 +795,76 @@ def match_stage1_unmatched_rows_to_full_orders(
     _log_step("Step 168: Selected the CA Tracking Update Out folder")
     _log_step("Step 169: Opened Save as type selection equivalent")
     _log_step("Step 170: Prepared Text (Tab delimited) upload format equivalent")
+    write_tracking_upload_template_file(
+        upload_template_rows,
+        config.tracking_upload_output_path,
+    )
     _log_step(
-        "Step 171: Tracking upload rows are ready for FTP to CA/Rithum, "
+        "Step 171: Saved tracking upload rows as Text (Tab delimited) to "
+        f"{config.tracking_upload_output_path}; ready for FTP to CA/Rithum, "
         "or a future API upload"
     )
-    return config.full_orders_matched_output_path
+    return config.tracking_upload_output_path
+
+
+def merge_stage2_rows_into_stage1_matched_rows(
+    stage1_matched_path: Path,
+    stage2_rows: list[dict[str, str]],
+    stage2_key_column: str,
+) -> list[dict[str, str]]:
+    if not stage1_matched_path.exists():
+        _log_step(
+            "Step 52.1: Stage 1 matched output was missing, so using Stage 2 "
+            "review rows as upload source"
+        )
+        return [dict(row) for row in stage2_rows]
+
+    stage1_rows = _read_csv(stage1_matched_path)
+    if not stage1_rows:
+        return [dict(row) for row in stage2_rows]
+
+    stage1_key_column = _resolve_column(
+        stage1_rows[0],
+        stage2_key_column,
+        ["SiteOrderID", "Order ID", "Channel Order ID"],
+        "Stage 1 matched",
+    )
+    correction_lookup = {
+        _normalized_key(row.get(stage2_key_column)): row
+        for row in stage2_rows
+        if _normalized_key(row.get(stage2_key_column))
+    }
+
+    merged_rows = []
+    for row in stage1_rows:
+        output_row = dict(row)
+        correction_row = correction_lookup.get(
+            _normalized_key(row.get(stage1_key_column))
+        )
+        if correction_row:
+            output_row.update(correction_row)
+        merged_rows.append(output_row)
+
+    return merged_rows
+
+
+def write_tracking_upload_template_file(
+    rows: list[dict[str, str]],
+    output_path: Path,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        column
+        for column in TRACKING_UPLOAD_TEMPLATE_COLUMNS
+        if column != "Shipping Carrier Source"
+    ]
+    with output_path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(
+            {column: row.get(column, "") for column in fieldnames}
+            for row in rows
+        )
 
 
 def build_tracking_upload_template_rows(
@@ -748,7 +877,7 @@ def _tracking_upload_template_row(row: dict[str, str]) -> dict[str, str]:
     shipping_method = str(row.get("DC Ship M", "") or "").strip()
     shipping_carrier, shipping_class = _shipping_conversion_values(shipping_method)
     return {
-        "Site Order ID": str(row.get("SiteOrderID", "") or "").strip(),
+        "Invoice No": str(row.get("SiteOrderID", "") or "").strip(),
         "Tracking Number": str(row.get("DC Track", "") or "").strip(),
         "Date Shipped": str(row.get("DC Date", "") or "").strip(),
         "Shipping Carrier Source": shipping_method,
@@ -986,7 +1115,7 @@ def run_stage2_steps(page: Page, config: Config) -> None:
 
     matched_path = match_stage1_unmatched_rows_to_full_orders(downloaded_path, config)
     if matched_path:
-        _log_step(f"Stage 2 matched output available at {matched_path}")
+        _log_step(f"Stage 2 output available at {matched_path}")
 
     _log_step("Stage 2: Ready for next instructions")
 

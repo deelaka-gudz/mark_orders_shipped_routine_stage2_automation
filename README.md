@@ -38,15 +38,20 @@ In the full workflow there are two input files:
 7. Fill missing non-GB dispatch values with `Airmail`.
 8. Save the rows that still need Stage 2 review to `NON_GB_UNMATCHED_OUTPUT_PATH`.
 
-The key Stage 1 output for Stage 2 is usually:
+Stage 2 uses two Stage 1 outputs:
 
 ```text
+downloads/matched_orders.csv
 downloads/non_gb_unmatched_orders_review.csv
 ```
 
+`matched_orders.csv` is the full Stage 1 enriched order export. This is the base for the final upload template, matching the screenshot workflow where the upload template is populated from the main prepared order file.
+
+`non_gb_unmatched_orders_review.csv` is the smaller review file containing the rows that still need the Full Orders Report lookup.
+
 ## Stage 2
 
-`automation_stage02.py` continues from the Stage 1 unmatched rows:
+`automation_stage02.py` continues from the Stage 1 outputs:
 
 1. Log in to Helm.
 2. Open Reports.
@@ -58,17 +63,20 @@ downloads/non_gb_unmatched_orders_review.csv
 8. If an order is `Despatch Ready` and still missing tracking, generate tracking numbers by incrementing the last three digits of a usable tracking seed.
 9. Copy the seed shipping method and dispatch date into generated rows where needed.
 10. Save the detailed Stage 2 matched output to `FULL_ORDERS_MATCHED_OUTPUT_PATH`.
+11. Merge the corrected Stage 2 review rows back into the full Stage 1 `MATCHED_OUTPUT_PATH` rows.
+12. Build the final tracking upload rows from the corrected full Stage 1 matched export.
+13. Save the final tracking upload handoff as a tab-delimited text file.
 
 The Stage 2 matched output is a detailed review file. It is not the final upload template.
 
 ## Tracking Upload Template Logic
 
-The manual process opens a separate upload template and copy/pastes values into it. The automation does not create a separate template file yet. Instead, `automation_stage02.py` memorizes the template layout in code and builds the equivalent rows in memory.
+The manual process opens a separate upload template and copy/pastes values into it. The automation does not create a separate Excel template workbook. Instead, `automation_stage02.py` memorizes the template layout in code, builds the equivalent rows, and writes the final upload file as tab-delimited text.
 
 The memorized upload-template columns are:
 
 ```text
-Site Order ID
+Invoice No
 Tracking Number
 Date Shipped
 Shipping Carrier Source
@@ -79,7 +87,7 @@ Prevent Site Processing
 
 The script maps values like this:
 
-- `Site Order ID`: from `SiteOrderID`
+- `Invoice No`: from `SiteOrderID`
 - `Tracking Number`: from `DC Track`
 - `Date Shipped`: from `DC Date`
 - `Shipping Carrier Source`: from `DC Ship M`
@@ -96,7 +104,11 @@ The manual spreadsheet uses formulas and paste-as-values. In Python, those are r
 - The final upload rows are reviewed with filters cleared and `Prevent Site Processing` filled for all rows.
 - The manual save step is represented as a tab-delimited upload handoff, ready for the CA/Rithum FTP process or a future API upload.
 
-The final manual steps save the completed template into the `CA Tracking Update\Out` folder as `Text (Tab delimited)`. The script currently prepares the same upload-shaped rows in memory and logs that handoff point; it does not write a separate template workbook.
+The final manual steps save the completed template into the `CA Tracking Update\Out` folder as `Text (Tab delimited)`. The script now writes the same tab-delimited upload handoff to `TRACKING_UPLOAD_OUTPUT_PATH`. By default this is:
+
+```text
+downloads/tracking_upload_template.txt
+```
 
 To add a new courier, update `COURIER_CONVERSIONS` in `automation_stage02.py`:
 
@@ -166,6 +178,7 @@ NON_GB_AIRMAIL_OUTPUT_PATH=downloads/non_gb_orders_airmail.csv
 NON_GB_WITH_DC_DATE_OUTPUT_PATH=downloads/non_gb_orders_with_dc_date_review.csv
 NON_GB_UNMATCHED_OUTPUT_PATH=downloads/non_gb_unmatched_orders_review.csv
 FULL_ORDERS_MATCHED_OUTPUT_PATH=downloads/stage2_full_orders_matched.csv
+TRACKING_UPLOAD_OUTPUT_PATH=downloads/tracking_upload_template.txt
 MATCH_KEY_COLUMN=Order ID
 ORDER_MATCH_KEY_COLUMN=SiteOrderID
 DC_MATCH_KEY_COLUMN=Order ID
@@ -195,6 +208,7 @@ Optional values:
 - `NON_GB_WITH_DC_DATE_OUTPUT_PATH`: non-GB review CSV containing rows that still have a real DC date after Airmail defaults.
 - `NON_GB_UNMATCHED_OUTPUT_PATH`: non-GB review CSV containing rows that had blank or `#N/A` DC Date before Airmail defaults.
 - `FULL_ORDERS_MATCHED_OUTPUT_PATH`: detailed Stage 2 output after matching Stage 1 unmatched rows to the Full Orders Report.
+- `TRACKING_UPLOAD_OUTPUT_PATH`: final tab-delimited tracking upload file shaped like the memorized upload template.
 - `MATCH_KEY_COLUMN`: column name that exists in both files, for example `Order ID`.
 - `ORDER_MATCH_KEY_COLUMN`: order export column used for the Stage 1 lookup.
 - `DC_MATCH_KEY_COLUMN`: DC shipping report column used for the Stage 1 lookup.
@@ -219,11 +233,11 @@ The scripts print completed steps as they run. Rithum orders are saved to `downl
 ## Current Script Map
 
 - `automation_stage01.py`: Helm login, Shipping Report download, Rithum/order matching, non-GB review outputs.
-- `automation_stage02.py`: Full Orders Report download, Stage 2 matching, cancelled/despatch-ready handling, in-memory tracking upload preparation.
+- `automation_stage02.py`: Full Orders Report download, Stage 2 matching, cancelled/despatch-ready handling, full Stage 1 merge, and tab-delimited tracking upload preparation.
 
 ## Next Stages
 
 Planned next steps:
 
-1. Add the actual tab-delimited export, FTP upload, or Rithum API upload once the handoff method is confirmed.
+1. Add FTP upload or Rithum API upload once the handoff method is confirmed.
 2. Add any missing courier mappings to `COURIER_CONVERSIONS`.
