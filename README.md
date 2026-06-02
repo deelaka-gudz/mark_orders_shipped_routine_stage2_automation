@@ -49,6 +49,60 @@ downloads/non_gb_unmatched_orders_review.csv
 
 `non_gb_unmatched_orders_review.csv` is the smaller review file containing the rows that still need the Full Orders Report lookup.
 
+## Generated Files And Flow
+
+The `downloads` folder contains both source exports and generated review/output files. The important files are:
+
+```text
+downloads/rithum_orders.csv
+downloads/dc_shipping_report.csv
+downloads/matched_orders.csv
+downloads/non_gb_orders_review.csv
+downloads/non_gb_orders_airmail.csv
+downloads/non_gb_orders_with_dc_date_review.csv
+downloads/non_gb_unmatched_orders_review.csv
+downloads/dc_full_orders_export.csv
+downloads/stage2_full_orders_matched.csv
+downloads/unmapped_courier_services.csv
+downloads/tracking_upload_template.txt
+```
+
+Stage 1 starts with the Rithum order export and the Helm/DC Shipping Report. It produces `matched_orders.csv`, which is the full enriched order file. It also produces review files for non-GB rows, including `non_gb_unmatched_orders_review.csv`, which is the smaller set of rows that still need Stage 2 correction.
+
+Stage 2 downloads the Helm Full Orders Report as `dc_full_orders_export.csv`, matches it against `non_gb_unmatched_orders_review.csv`, and writes the detailed correction review to `stage2_full_orders_matched.csv`. That review file is then merged back into the full Stage 1 `matched_orders.csv` data in memory.
+
+The final output is:
+
+```text
+downloads/tracking_upload_template.txt
+```
+
+That file is the tab-delimited tracking upload handoff. It is built from the full Stage 1 matched export plus any Stage 2 corrections.
+
+The interaction between files is:
+
+```text
+rithum_orders.csv
+        +
+dc_shipping_report.csv
+        |
+        v
+matched_orders.csv
+        |
+        +---- non_gb_unmatched_orders_review.csv
+                         +
+              dc_full_orders_export.csv
+                         |
+                         v
+              stage2_full_orders_matched.csv
+                         |
+                         v
+matched_orders.csv + Stage 2 corrections
+                         |
+                         v
+tracking_upload_template.txt
+```
+
 ## Stage 2
 
 `automation_stage02.py` continues from the Stage 1 outputs:
