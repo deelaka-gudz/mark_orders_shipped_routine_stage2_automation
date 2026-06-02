@@ -114,7 +114,7 @@ class Config:
             helm_report_ready_timeout_seconds=int(
                 os.getenv("HELM_REPORT_READY_TIMEOUT_SECONDS") or "2400"
             ),
-            headless=_env_flag("HEADLESS", default=False),
+            headless=_env_flag("AUTOMATION_HEADLESS", default=_env_flag("HEADLESS", default=False)),
             debug=_env_flag("DEBUG", default=False),
             helm_manual_login_fallback=_env_flag(
                 "HELM_MANUAL_LOGIN_FALLBACK", default=True

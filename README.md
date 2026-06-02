@@ -307,10 +307,12 @@ The scripts can also be run from a local Streamlit dashboard:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-streamlit run app.py
+streamlit run app.py --server.headless true
 ```
 
 The dashboard provides one button to run Stage 1 and then Stage 2 with the same Python environment. It streams the script logs, shows the current stage, current step, uptime, generated files, and download buttons for the final tab-delimited tracking upload handoff and unmapped courier review file.
+
+Runs launched from the dashboard force `AUTOMATION_HEADLESS=true`, so Playwright runs without opening the browser window even if `.env` has `HEADLESS=false`.
 
 The dashboard still respects the upload pause. It only generates `downloads/tracking_upload_template.txt`; it does not upload to Rithum/ChannelAdvisor or FTP.
 

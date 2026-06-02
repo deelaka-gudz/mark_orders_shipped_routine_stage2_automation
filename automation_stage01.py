@@ -353,7 +353,7 @@ class Config:
             helm_manual_login_timeout_seconds=int(
                 os.getenv("HELM_MANUAL_LOGIN_TIMEOUT_SECONDS") or "300"
             ),
-            headless=_env_flag("HEADLESS", default=False),
+            headless=_env_flag("AUTOMATION_HEADLESS", default=_env_flag("HEADLESS", default=False)),
             debug=_env_flag("DEBUG", default=False),
         )
 

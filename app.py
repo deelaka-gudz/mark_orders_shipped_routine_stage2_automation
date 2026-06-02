@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import time
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,10 +67,12 @@ def run_stage(
 ) -> StageResult:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env["HEADLESS"] = "true"
+    env["AUTOMATION_HEADLESS"] = "true"
 
     stage_start = time.monotonic()
     stage_status.info(f"{stage_name} running")
-    step_status.info("Waiting for first log line...")
+    step_status.info("Waiting for first log line... Headless browser mode is active.")
 
     process = subprocess.Popen(
         [sys.executable, str(script_path)],
@@ -159,6 +162,19 @@ def render_downloads() -> None:
     st.subheader("Final Output")
     if FINAL_OUTPUT_PATH.exists():
         st.success(f"Final output ready: {FINAL_OUTPUT_PATH}")
+        upload_stats = tracking_upload_stats(FINAL_OUTPUT_PATH)
+        if upload_stats["rows"]:
+            st.caption(
+                "Rows: {rows} | Complete tracking rows: {complete_rows} | "
+                "Rows missing tracking/date/carrier: {incomplete_rows}".format(
+                    **upload_stats
+                )
+            )
+        if upload_stats["incomplete_rows"]:
+            st.warning(
+                "The final output contains rows with blank tracking/date/carrier fields. "
+                "Review these before using the file."
+            )
         st.download_button(
             "Download tracking upload file",
             data=FINAL_OUTPUT_PATH.read_bytes(),
@@ -168,7 +184,8 @@ def render_downloads() -> None:
     else:
         st.info("Final output is not available yet. Click 'Click to Start' first.")
 
-    if UNMAPPED_COURIERS_PATH.exists() and UNMAPPED_COURIERS_PATH.stat().st_size > 0:
+    unmapped_rows = unmapped_courier_rows(UNMAPPED_COURIERS_PATH)
+    if unmapped_rows:
         st.warning(
             "Unmapped courier review file exists. Check it before using the final output."
         )
@@ -178,6 +195,44 @@ def render_downloads() -> None:
             file_name=UNMAPPED_COURIERS_PATH.name,
             mime="text/csv",
         )
+    elif UNMAPPED_COURIERS_PATH.exists():
+        st.success("No unmapped courier services found.")
+
+
+def tracking_upload_stats(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {"rows": 0, "complete_rows": 0, "incomplete_rows": 0}
+
+    with path.open(newline="", encoding="utf-8-sig") as file:
+        rows = list(csv.DictReader(file, delimiter="\t"))
+
+    required_columns = [
+        "Tracking Number",
+        "Date Shipped",
+        "Shipping Carrier Code",
+        "Shipping Class Code",
+    ]
+    complete_rows = sum(
+        1
+        for row in rows
+        if all(str(row.get(column, "") or "").strip() for column in required_columns)
+    )
+    return {
+        "rows": len(rows),
+        "complete_rows": complete_rows,
+        "incomplete_rows": len(rows) - complete_rows,
+    }
+
+
+def unmapped_courier_rows(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8-sig") as file:
+        return [
+            row
+            for row in csv.DictReader(file)
+            if str(row.get("Shipping Carrier Source", "") or "").strip()
+        ]
 
 
 def main() -> None:
