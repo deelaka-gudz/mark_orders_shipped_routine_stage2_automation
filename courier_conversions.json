@@ -1,0 +1,58 @@
+{
+  "Evri 24 Non POD": {
+    "carrier_code": "Evri",
+    "class_code": "Evri 24"
+  },
+  "Evri 48": {
+    "carrier_code": "Evri",
+    "class_code": "Evri 48"
+  },
+  "Evri 48 Non POD": {
+    "carrier_code": "Evri",
+    "class_code": "Evri 48"
+  },
+  "Evri Next Day Contract Rate": {
+    "carrier_code": "Evri",
+    "class_code": "Evri 24"
+  },
+  "Evri DDP NON POD": {
+    "carrier_code": "Evri",
+    "class_code": "International"
+  },
+  "RMCD Tracked 24 (TPN24) - No Signature": {
+    "carrier_code": "Royal Mail",
+    "class_code": "Royal Mail Tracked 24"
+  },
+  "RMCD Tracked 48 (TPS48) - No Signature": {
+    "carrier_code": "Royal Mail",
+    "class_code": "Royal Mail Tracked 48"
+  },
+  "RMCD Tracked 48 (TPS48)- No Signature": {
+    "carrier_code": "Royal Mail",
+    "class_code": "Royal Mail Tracked 48"
+  },
+  "RMCD Tracked 24 (TPN24) - With Signature": {
+    "carrier_code": "Royal Mail",
+    "class_code": "Royal Mail Tracked 24"
+  },
+  "RMCD Tracked 48 (TPS48) - With Signature": {
+    "carrier_code": "Royal Mail",
+    "class_code": "Royal Mail Tracked 48"
+  },
+  "RMCD International Business Parcel Tracked Country Priced (MP7)": {
+    "carrier_code": "Royal Mail",
+    "class_code": "Airmail"
+  },
+  "International Business Parcel Tracked DDP (RMP)-2": {
+    "carrier_code": "Royal Mail",
+    "class_code": "Airmail"
+  },
+  "Airmail": {
+    "carrier_code": "Royal Mail",
+    "class_code": "Airmail"
+  },
+  "Cancelled": {
+    "carrier_code": "Cancelled",
+    "class_code": "Cancelled"
+  }
+}

@@ -97,10 +97,11 @@ The script maps values like this:
 
 The manual spreadsheet uses formulas and paste-as-values. In Python, those are represented as direct transformations:
 
-- The carrier/class lookup is handled by `COURIER_CONVERSIONS`.
+- The carrier/class lookup is handled by `courier_conversions.json`.
 - The raw helper column is removed in memory after conversion.
 - Cancelled rows are flagged with `Prevent Site Processing = TRUE`.
 - Non-cancelled rows are flagged with `Prevent Site Processing = FALSE`.
+- Unknown courier services are written as `#N/A` and listed in `UNMAPPED_COURIER_SERVICES_OUTPUT_PATH`.
 - The final upload rows are reviewed with filters cleared and `Prevent Site Processing` filled for all rows.
 - The manual save step is represented as a tab-delimited upload handoff, ready for the CA/Rithum FTP process or a future API upload.
 
@@ -110,23 +111,32 @@ The final manual steps save the completed template into the `CA Tracking Update\
 downloads/tracking_upload_template.txt
 ```
 
-To add a new courier, update `COURIER_CONVERSIONS` in `automation_stage02.py`:
+## Courier Conversions
 
-```python
-COURIER_CONVERSIONS = {
-    "Evri 24 Non POD": ("Evri", "Evri 24"),
-    "RMCD Tracked 48 (TPS48) - No Signature": (
-        "Royal Mail",
-        "Royal Mail Tracked 48",
-    ),
-}
+Known courier service mappings live in:
+
+```text
+courier_conversions.json
 ```
 
 The key format is:
 
-```python
-"Raw DC Ship M value": ("Shipping Carrier Code", "Shipping Class Code")
+```json
+{
+  "Raw DC Ship M value": {
+    "carrier_code": "Shipping Carrier Code",
+    "class_code": "Shipping Class Code"
+  }
+}
 ```
+
+If the script sees a `DC Ship M` value that is not in `courier_conversions.json`, it writes `#N/A` into the carrier/class upload columns and prints a warning. It also writes the raw unmapped values to:
+
+```text
+downloads/unmapped_courier_services.csv
+```
+
+That file is only a review list. The confirmed mapping should be added to `courier_conversions.json` before the upload file is used.
 
 ## Setup
 
@@ -179,6 +189,8 @@ NON_GB_WITH_DC_DATE_OUTPUT_PATH=downloads/non_gb_orders_with_dc_date_review.csv
 NON_GB_UNMATCHED_OUTPUT_PATH=downloads/non_gb_unmatched_orders_review.csv
 FULL_ORDERS_MATCHED_OUTPUT_PATH=downloads/stage2_full_orders_matched.csv
 TRACKING_UPLOAD_OUTPUT_PATH=downloads/tracking_upload_template.txt
+COURIER_CONVERSIONS_PATH=courier_conversions.json
+UNMAPPED_COURIER_SERVICES_OUTPUT_PATH=downloads/unmapped_courier_services.csv
 MATCH_KEY_COLUMN=Order ID
 ORDER_MATCH_KEY_COLUMN=SiteOrderID
 DC_MATCH_KEY_COLUMN=Order ID
@@ -209,6 +221,8 @@ Optional values:
 - `NON_GB_UNMATCHED_OUTPUT_PATH`: non-GB review CSV containing rows that had blank or `#N/A` DC Date before Airmail defaults.
 - `FULL_ORDERS_MATCHED_OUTPUT_PATH`: detailed Stage 2 output after matching Stage 1 unmatched rows to the Full Orders Report.
 - `TRACKING_UPLOAD_OUTPUT_PATH`: final tab-delimited tracking upload file shaped like the memorized upload template.
+- `COURIER_CONVERSIONS_PATH`: JSON file containing known courier service to Rithum carrier/class mappings.
+- `UNMAPPED_COURIER_SERVICES_OUTPUT_PATH`: review CSV listing raw courier services that did not exist in the conversion JSON.
 - `MATCH_KEY_COLUMN`: column name that exists in both files, for example `Order ID`.
 - `ORDER_MATCH_KEY_COLUMN`: order export column used for the Stage 1 lookup.
 - `DC_MATCH_KEY_COLUMN`: DC shipping report column used for the Stage 1 lookup.
@@ -240,4 +254,4 @@ The scripts print completed steps as they run. Rithum orders are saved to `downl
 Planned next steps:
 
 1. Add FTP upload or Rithum API upload once the handoff method is confirmed.
-2. Add any missing courier mappings to `COURIER_CONVERSIONS`.
+2. Add any missing courier mappings to `courier_conversions.json`.

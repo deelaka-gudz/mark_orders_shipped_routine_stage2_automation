@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -34,43 +35,7 @@ TRACKING_UPLOAD_TEMPLATE_COLUMNS = [
     "Prevent Site Processing",
 ]
 
-COURIER_CONVERSIONS = {
-    "Evri 24 Non POD": ("Evri", "Evri 24"),
-    "Evri 48": ("Evri", "Evri 48"),
-    "Evri 48 Non POD": ("Evri", "Evri 48"),
-    "Evri Next Day Contract Rate": ("Evri", "Evri 24"),
-    "Evri DDP NON POD": ("Evri", "International"),
-    "RMCD Tracked 24 (TPN24) - No Signature": (
-        "Royal Mail",
-        "Royal Mail Tracked 24",
-    ),
-    "RMCD Tracked 48 (TPS48) - No Signature": (
-        "Royal Mail",
-        "Royal Mail Tracked 48",
-    ),
-    "RMCD Tracked 48 (TPS48)- No Signature": (
-        "Royal Mail",
-        "Royal Mail Tracked 48",
-    ),
-    "RMCD Tracked 24 (TPN24) - With Signature": (
-        "Royal Mail",
-        "Royal Mail Tracked 24",
-    ),
-    "RMCD Tracked 48 (TPS48) - With Signature": (
-        "Royal Mail",
-        "Royal Mail Tracked 48",
-    ),
-    "RMCD International Business Parcel Tracked Country Priced (MP7)": (
-        "Royal Mail",
-        "Airmail",
-    ),
-    "International Business Parcel Tracked DDP (RMP)-2": (
-        "Royal Mail",
-        "Airmail",
-    ),
-    "Airmail": ("Royal Mail", "Airmail"),
-    "Cancelled": ("Cancelled", "Cancelled"),
-}
+UNMAPPED_COURIER_FIELDNAMES = ["Shipping Carrier Source"]
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -97,6 +62,8 @@ class Config:
     non_gb_unmatched_output_path: Path
     full_orders_matched_output_path: Path
     tracking_upload_output_path: Path
+    courier_conversions_path: Path
+    unmapped_courier_services_output_path: Path
     full_orders_match_key_column: str
     full_orders_report_key_column: str
     helm_report_ready_timeout_seconds: int
@@ -131,6 +98,13 @@ class Config:
                 os.getenv("TRACKING_UPLOAD_OUTPUT_PATH")
                 or "downloads/tracking_upload_template.txt"
             ),
+            courier_conversions_path=Path(
+                os.getenv("COURIER_CONVERSIONS_PATH") or "courier_conversions.json"
+            ),
+            unmapped_courier_services_output_path=Path(
+                os.getenv("UNMAPPED_COURIER_SERVICES_OUTPUT_PATH")
+                or "downloads/unmapped_courier_services.csv"
+            ),
             full_orders_match_key_column=(
                 os.getenv("FULL_ORDERS_MATCH_KEY_COLUMN") or "SiteOrderID"
             ).strip(),
@@ -149,6 +123,88 @@ class Config:
                 os.getenv("HELM_MANUAL_LOGIN_TIMEOUT_SECONDS") or "300"
             ),
         )
+
+
+def load_courier_conversions(path: Path) -> dict[str, tuple[str, str]]:
+    if not path.exists():
+        raise RuntimeError(
+            f"Courier conversion file does not exist: {path}. "
+            "Create it or set COURIER_CONVERSIONS_PATH."
+        )
+
+    with path.open("r", encoding="utf-8-sig") as file:
+        raw_conversions = json.load(file)
+
+    if not isinstance(raw_conversions, dict):
+        raise RuntimeError(
+            f"Courier conversion file must contain a JSON object: {path}"
+        )
+
+    conversions: dict[str, tuple[str, str]] = {}
+    for raw_service, raw_value in raw_conversions.items():
+        service = str(raw_service or "").strip()
+        if not service:
+            continue
+
+        if not isinstance(raw_value, dict):
+            raise RuntimeError(
+                f"Courier conversion for '{service}' must be a JSON object."
+            )
+
+        carrier_code = str(raw_value.get("carrier_code", "") or "").strip()
+        class_code = str(raw_value.get("class_code", "") or "").strip()
+        if not carrier_code or not class_code:
+            raise RuntimeError(
+                f"Courier conversion for '{service}' must include carrier_code "
+                "and class_code."
+            )
+
+        conversions[service] = (carrier_code, class_code)
+
+    return conversions
+
+
+def write_unmapped_courier_services_file(
+    services: set[str],
+    output_path: Path,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=UNMAPPED_COURIER_FIELDNAMES)
+        writer.writeheader()
+        for service in sorted(services, key=str.upper):
+            writer.writerow({"Shipping Carrier Source": service})
+
+
+def prepare_tracking_upload_template_rows(
+    source_rows: list[dict[str, str]],
+    config: Config,
+) -> tuple[list[dict[str, str]], int, int]:
+    courier_conversions = load_courier_conversions(config.courier_conversions_path)
+    unmapped_services: set[str] = set()
+    upload_rows = build_tracking_upload_template_rows(
+        source_rows,
+        courier_conversions,
+        unmapped_services,
+    )
+
+    write_unmapped_courier_services_file(
+        unmapped_services,
+        config.unmapped_courier_services_output_path,
+    )
+    if unmapped_services:
+        print(
+            "[WARN] Unmapped courier services found. Add them to "
+            f"{config.courier_conversions_path} before uploading."
+        )
+        print(
+            "[WARN] Unmapped courier service list written to "
+            f"{config.unmapped_courier_services_output_path}"
+        )
+        for service in sorted(unmapped_services, key=str.upper):
+            print(f"[WARN] Unmapped courier service found: {service}")
+
+    return upload_rows, len(courier_conversions), len(unmapped_services)
 
 
 def open_orders_reports_section(page: Page) -> None:
@@ -417,12 +473,18 @@ def match_stage1_unmatched_rows_to_full_orders(
         if not config.matched_output_path.exists():
             return None
 
-        upload_template_rows = build_tracking_upload_template_rows(
-            merge_stage2_rows_into_stage1_matched_rows(
-                config.matched_output_path,
-                [],
-                config.full_orders_match_key_column,
-            )
+        upload_source_rows = merge_stage2_rows_into_stage1_matched_rows(
+            config.matched_output_path,
+            [],
+            config.full_orders_match_key_column,
+        )
+        (
+            upload_template_rows,
+            _courier_conversion_count,
+            _unmapped_courier_count,
+        ) = prepare_tracking_upload_template_rows(
+            upload_source_rows,
+            config,
         )
         remove_shipping_carrier_source_column(upload_template_rows)
         apply_prevent_site_processing_flags(upload_template_rows)
@@ -447,12 +509,18 @@ def match_stage1_unmatched_rows_to_full_orders(
     if not unmatched_rows:
         _write_dict_rows(config.full_orders_matched_output_path, [])
         _log_step("Step 10: No Stage 1 unmatched rows to match against Full Orders")
-        upload_template_rows = build_tracking_upload_template_rows(
-            merge_stage2_rows_into_stage1_matched_rows(
-                config.matched_output_path,
-                [],
-                config.full_orders_match_key_column,
-            )
+        upload_source_rows = merge_stage2_rows_into_stage1_matched_rows(
+            config.matched_output_path,
+            [],
+            config.full_orders_match_key_column,
+        )
+        (
+            upload_template_rows,
+            _courier_conversion_count,
+            _unmapped_courier_count,
+        ) = prepare_tracking_upload_template_rows(
+            upload_source_rows,
+            config,
         )
         remove_shipping_carrier_source_column(upload_template_rows)
         apply_prevent_site_processing_flags(upload_template_rows)
@@ -623,7 +691,11 @@ def match_stage1_unmatched_rows_to_full_orders(
         f"export for {len(upload_source_rows)} upload source rows"
     )
 
-    upload_template_rows = build_tracking_upload_template_rows(upload_source_rows)
+    (
+        upload_template_rows,
+        courier_conversion_count,
+        unmapped_courier_count,
+    ) = prepare_tracking_upload_template_rows(upload_source_rows, config)
     _log_step("Step 53: Click Horizontal equivalent")
     _log_step("Step 54: Selected column A equivalent")
     _log_step("Step 55: Selected A1 Invoice No template header equivalent")
@@ -687,9 +759,16 @@ def match_stage1_unmatched_rows_to_full_orders(
     _log_step("Step 93: Prepared courier conversion lookup formula equivalent")
     _log_step("Step 94: Applied courier conversion lookup to formula bar equivalent")
     _log_step(
-        "Step 95: Memorized courier conversion table with "
-        f"{len(COURIER_CONVERSIONS)} courier rows"
+        "Step 95: Loaded courier conversion table with "
+        f"{courier_conversion_count} courier rows from "
+        f"{config.courier_conversions_path}"
     )
+    if unmapped_courier_count:
+        _log_step(
+            "Step 95.1: Found "
+            f"{unmapped_courier_count} unmapped courier services; review "
+            f"{config.unmapped_courier_services_output_path}"
+        )
     _log_step("Step 96: Selected conversion table courier column equivalent")
     _log_step("Step 97: Confirmed courier conversion formula equivalent")
     _log_step("Step 98: Applied first Shipping Carrier Code lookup value")
@@ -862,20 +941,36 @@ def write_tracking_upload_template_file(
         writer = csv.DictWriter(file, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
         writer.writerows(
-            {column: row.get(column, "") for column in fieldnames}
-            for row in rows
+            {column: row.get(column, "") for column in fieldnames} for row in rows
         )
 
 
 def build_tracking_upload_template_rows(
     rows: list[dict[str, str]],
+    courier_conversions: dict[str, tuple[str, str]],
+    unmapped_services: set[str],
 ) -> list[dict[str, str]]:
-    return [_tracking_upload_template_row(row) for row in rows]
+    return [
+        _tracking_upload_template_row(
+            row,
+            courier_conversions,
+            unmapped_services,
+        )
+        for row in rows
+    ]
 
 
-def _tracking_upload_template_row(row: dict[str, str]) -> dict[str, str]:
+def _tracking_upload_template_row(
+    row: dict[str, str],
+    courier_conversions: dict[str, tuple[str, str]],
+    unmapped_services: set[str],
+) -> dict[str, str]:
     shipping_method = str(row.get("DC Ship M", "") or "").strip()
-    shipping_carrier, shipping_class = _shipping_conversion_values(shipping_method)
+    shipping_carrier, shipping_class = _shipping_conversion_values(
+        shipping_method,
+        courier_conversions,
+        unmapped_services,
+    )
     return {
         "Invoice No": str(row.get("SiteOrderID", "") or "").strip(),
         "Tracking Number": str(row.get("DC Track", "") or "").strip(),
@@ -926,25 +1021,21 @@ def count_rows_with_value(
     )
 
 
-def _shipping_conversion_values(shipping_method: str) -> tuple[str, str]:
+def _shipping_conversion_values(
+    shipping_method: str,
+    courier_conversions: dict[str, tuple[str, str]],
+    unmapped_services: set[str],
+) -> tuple[str, str]:
     normalized = shipping_method.strip()
     if not normalized:
         return "", ""
 
-    for courier, conversion_values in COURIER_CONVERSIONS.items():
+    for courier, conversion_values in courier_conversions.items():
         if normalized.upper() == courier.upper():
             return conversion_values
 
-    first_token = normalized.split(maxsplit=1)[0]
-    fallback_carriers = {
-        "EVRI": "Evri",
-        "RM": "RM",
-        "RMCD": "RMCD",
-        "ROYAL": "Royal Mail",
-        "AIRMAIL": "Airmail",
-        "CANCELLED": "Cancelled",
-    }
-    return fallback_carriers.get(first_token.upper(), first_token), normalized
+    unmapped_services.add(normalized)
+    return "#N/A", "#N/A"
 
 
 def _resolve_column(
