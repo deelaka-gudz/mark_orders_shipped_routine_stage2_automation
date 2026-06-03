@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -29,6 +30,13 @@ def _require_env(name: str) -> str:
     if not value:
         raise SystemExit(f"Missing required environment variable: {name}")
     return value
+
+
+def _dotenv_or_env(dotenv_values_map: dict[str, Any], name: str) -> str | None:
+    value = dotenv_values_map.get(name)
+    if value is None:
+        value = os.getenv(name)
+    return str(value) if value is not None else None
 
 
 def _log_info(debug: bool, message: str) -> None:
@@ -58,7 +66,7 @@ def _click_first_visible(
             locator.first.wait_for(state="visible", timeout=timeout_ms)
             locator.first.click(timeout=timeout_ms)
             return
-        except PlaywrightTimeoutError as error:
+        except (PlaywrightTimeoutError, PlaywrightError) as error:
             last_error = error
             continue
     raise RuntimeError(f"Could not click {description}.") from last_error
@@ -77,11 +85,15 @@ def _fill_first_visible(
             field.wait_for(state="visible", timeout=timeout_ms)
             field.click(timeout=timeout_ms)
             field.fill(value, timeout=timeout_ms)
+            field.dispatch_event("input", timeout=timeout_ms)
+            field.dispatch_event("change", timeout=timeout_ms)
             actual_value = field.input_value(timeout=timeout_ms)
             if actual_value != value:
                 field.click(timeout=timeout_ms)
                 field.press("Control+A", timeout=timeout_ms)
                 field.type(value, delay=25, timeout=timeout_ms)
+                field.dispatch_event("input", timeout=timeout_ms)
+                field.dispatch_event("change", timeout=timeout_ms)
                 actual_value = field.input_value(timeout=timeout_ms)
             if actual_value != value:
                 raise RuntimeError(
@@ -250,6 +262,11 @@ class Config:
     password: str
     download_dir: Path
     rithum_enabled: bool
+    rithum_login_url: str
+    rithum_email: str
+    rithum_password: str
+    rithum_account_name: str
+    rithum_order_filter_name: str
     rithum_base_url: str
     rithum_application_id: str | None
     rithum_shared_secret: str | None
@@ -277,6 +294,7 @@ class Config:
     @staticmethod
     def load(dotenv_path: Path = DOTENV_PATH) -> "Config":
         load_dotenv(dotenv_path=dotenv_path, override=True, encoding="utf-8-sig")
+        dotenv_values_map = dotenv_values(dotenv_path, encoding="utf-8-sig")
 
         return Config(
             helm_url=(
@@ -288,6 +306,18 @@ class Config:
                 os.getenv("HELM_REPORT_DOWNLOAD_DIR") or "downloads"
             ).resolve(),
             rithum_enabled=_env_flag("RITHUM_ENABLED", default=False),
+            rithum_login_url=(
+                os.getenv("RITHUM_LOGIN_URL") or "https://login.channeladvisor.com/"
+            ).strip(),
+            rithum_email=_require_env("HELM_EMAIL").strip(),
+            rithum_password=_dotenv_or_env(dotenv_values_map, "RITHUM_PASSWORD") or "",
+            rithum_account_name=(
+                os.getenv("RITHUM_ACCOUNT_NAME") or "My Beauty And Care - UK"
+            ).strip(),
+            rithum_order_filter_name=(
+                os.getenv("RITHUM_ORDER_FILTER_NAME")
+                or "ship by excludes prime/premium as of 19/11/2025"
+            ).strip(),
             rithum_base_url=(
                 os.getenv("RITHUM_BASE_URL") or "https://api.channeladvisor.com"
             ).strip(),
@@ -546,6 +576,512 @@ def download_rithum_orders(config: Config) -> Path:
     orders = RithumClient(config).fetch_orders()
     _write_csv(config.rithum_orders_output_path, orders)
     return config.rithum_orders_output_path
+
+
+def begin_rithum_browser_order_download(page: Page, config: Config) -> Path:
+    if not config.rithum_email:
+        raise RuntimeError("Missing Rithum email. Set HELM_EMAIL.")
+    if not config.rithum_password:
+        raise RuntimeError("Missing Rithum password. Set RITHUM_PASSWORD.")
+
+    page.goto(config.rithum_login_url, wait_until="domcontentloaded")
+    _wait_for_network_idle(page)
+    _log_step("Step 1.1: Opened Rithum login page")
+
+    _fill_first_visible(
+        [
+            page.locator("input[data-test='email']"),
+            page.locator("input[name='username']"),
+            page.locator("input[autocomplete='username']"),
+            page.get_by_label("Email", exact=False),
+        ],
+        config.rithum_email,
+        "Rithum email input",
+    )
+    _log_step("Step 1.2: Entered Rithum email")
+
+    _click_first_visible(
+        [
+            page.locator("button[data-test='submit']"),
+            page.get_by_role("button", name=re.compile(r"^Next$", re.I)),
+            page.locator("form[name='login'] button[type='submit']"),
+        ],
+        "Rithum Next button",
+    )
+    _wait_for_network_idle(page)
+    _log_step("Step 1.3: Submitted Rithum email")
+
+    _fill_first_visible(
+        [
+            page.locator("input[data-test='password']"),
+            page.locator("input[name='password']"),
+            page.locator("input[autocomplete='current-password']"),
+            page.locator("input[type='password']"),
+            page.get_by_label("Password", exact=False),
+        ],
+        config.rithum_password,
+        "Rithum password input",
+    )
+    _log_step("Step 1.4: Entered Rithum password")
+
+    _click_first_visible(
+        [
+            page.locator("button[data-test='submit']"),
+            page.get_by_role("button", name=re.compile(r"^Log In$", re.I)),
+            page.locator("form[name='login'] button[type='submit']"),
+        ],
+        "Rithum Log In button",
+    )
+    _wait_for_network_idle(page)
+    _log_step("Step 1.5: Submitted Rithum login")
+
+    _click_first_visible(
+        [
+            page.locator("a[data-test='ca-complete-link']"),
+            page.get_by_role("link", name=re.compile(r"Go to Rithum for Brands", re.I)),
+            page.locator("a[href*='complete.channeladvisor.com']"),
+        ],
+        "Go to Rithum for Brands link",
+        timeout_ms=30000,
+    )
+    _wait_for_network_idle(page)
+    _log_step("Step 1.6: Opened Rithum for Brands")
+
+    select_rithum_account(page, config.rithum_account_name)
+    _log_step("Step 1.7: Selected Rithum account")
+    click_rithum_fulfill(page)
+    _log_step("Step 1.8: Opened Fulfill section")
+    click_rithum_orders(page)
+    _log_step("Step 1.9: Opened Orders page")
+    click_rithum_select_filter_dropdown(page)
+    _log_step("Step 1.10: Opened order filter dropdown")
+    search_and_select_rithum_order_filter(page, config.rithum_order_filter_name)
+    _log_step("Step 1.11: Selected saved order filter")
+    click_rithum_export_dropdown(page)
+    _log_step("Step 1.12: Opened export layout menu")
+    return download_rithum_basic_layout_export(
+        page, config.rithum_orders_output_path, config.rithum_email
+    )
+
+
+def select_rithum_account(page: Page, account_name: str) -> None:
+    account_name_pattern = re.compile(re.escape(account_name), re.I)
+    selected_label = page.locator(
+        "._coreui-surround__account-selector__selected-account-label"
+    ).first
+    try:
+        if selected_label.is_visible(timeout=5000):
+            selected_text = re.sub(
+                r"\s+", " ", selected_label.inner_text(timeout=5000)
+            ).strip()
+            if selected_text.lower() == account_name.lower():
+                return
+    except PlaywrightTimeoutError:
+        pass
+
+    account_options = [
+        page.locator(
+            "a._coreui-surround__account-selector__search-result",
+            has_text=account_name,
+        ),
+        page.get_by_role("link", name=account_name_pattern),
+        page.get_by_text(account_name, exact=True),
+    ]
+
+    try:
+        _click_first_visible(
+            account_options,
+            f"Rithum account option '{account_name}'",
+            timeout_ms=1500,
+        )
+        _wait_for_network_idle(page)
+        return
+    except RuntimeError:
+        pass
+
+    _click_first_visible(
+        [
+            page.locator("#complete-web-surround--account-selector-button"),
+            page.locator("._coreui-surround__account-selector__button"),
+            page.get_by_text(re.compile(r"All Accounts", re.I)),
+        ],
+        "Rithum account selector",
+        timeout_ms=30000,
+    )
+
+    _click_first_visible(
+        account_options,
+        f"Rithum account option '{account_name}'",
+        timeout_ms=30000,
+    )
+    _wait_for_network_idle(page)
+
+
+def click_rithum_fulfill(page: Page) -> None:
+    _click_first_visible(
+        [
+            page.locator("a[data-menu-item-id='44C18DE7']"),
+            page.locator("a[href*='/Orders/AllOrders.mvc/List']"),
+            page.locator("._coreui-surround__bar-1__menu a", has_text="Fulfill"),
+            page.get_by_role("link", name=re.compile(r"^Fulfill$", re.I)),
+            page.get_by_text("Fulfill", exact=True),
+        ],
+        "Rithum Fulfill navigation item",
+        timeout_ms=30000,
+    )
+    _wait_for_network_idle(page)
+
+
+def click_rithum_orders(page: Page) -> None:
+    _click_first_visible(
+        [
+            page.locator("a[data-menu-item-id='8571E90']"),
+            page.locator("a._coreui-surround__mega-menu__menu-item", has_text="Orders"),
+            page.locator("a._coreui-surround__bar-2__menu-item", has_text="Orders"),
+            page.locator("a[href*='/Orders/AllOrders.mvc/List']"),
+            page.get_by_role("link", name=re.compile(r"^Orders$", re.I)),
+        ],
+        "Rithum Orders navigation item",
+        timeout_ms=30000,
+    )
+    _wait_for_network_idle(page)
+
+
+def click_rithum_select_filter_dropdown(page: Page) -> None:
+    _click_first_visible(
+        [
+            page.locator("span[data-turbofilter-advasicfiltereditor-filter-picker]"),
+            page.locator("#filter .tb-filter-advasicfiltereditor-filter-picker"),
+            page.locator(
+                ".tb-filter-advasicfiltereditor-filter-picker",
+                has_text="Select a Filter",
+            ),
+            page.get_by_text("Select a Filter", exact=True),
+        ],
+        "Rithum Select a Filter dropdown",
+        timeout_ms=30000,
+    )
+    page.wait_for_timeout(500)
+
+
+def search_and_select_rithum_order_filter(page: Page, filter_name: str) -> None:
+    search_field = _fill_first_visible(
+        [
+            page.locator("input[data-turbosearchbox-input]"),
+            page.locator(
+                "[data-turboinlineselect-searchbox] input[placeholder='Search...']"
+            ),
+            page.locator(".tb-inlineselect-searchbox input.tb-input"),
+            page.get_by_placeholder("Search..."),
+        ],
+        filter_name,
+        "Rithum order filter search input",
+        timeout_ms=30000,
+    )
+    search_field.press("Enter", timeout=5000)
+    page.wait_for_timeout(500)
+
+    filter_name_pattern = re.compile(re.escape(filter_name), re.I)
+    _click_first_visible(
+        [
+            page.locator(
+                "[data-turbolistview-item-key='b964038a-2655-409e-b8ae-448775f1f0d4']"
+            ),
+            page.locator(
+                ".tb-filter-advasicfiltereditor-filter-option",
+                has_text="Ship by Excludes Prime/Premium As of 19/11/2025",
+            ),
+            page.locator(".tb-filter-advasicfiltereditor-filter-option").filter(
+                has_text=filter_name_pattern
+            ),
+            page.locator(".tb-listview-item").filter(has_text=filter_name_pattern),
+            page.get_by_text(filter_name_pattern),
+        ],
+        f"Rithum order filter option '{filter_name}'",
+        timeout_ms=30000,
+    )
+    _wait_for_network_idle(page)
+
+
+def click_rithum_export_dropdown(page: Page) -> None:
+    _click_first_visible(
+        [
+            page.locator(
+                "button[data-turbodropdown-popup='jquery:#exportBtnDropdown']"
+            ),
+            page.locator("button.tb-dropdown-toggle[data-button-toggle='dropdown']"),
+            page.locator(".tb-btn-group button.tb-dropdown-toggle").filter(
+                has=page.locator("i.tb-caret")
+            ),
+        ],
+        "Rithum export dropdown button",
+        timeout_ms=30000,
+    )
+    page.wait_for_timeout(500)
+
+
+def download_rithum_basic_layout_export(
+    page: Page, output_path: Path, user_email: str
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    requested_after_ms = int(time.time() * 1000)
+
+    _click_first_visible(
+        [
+            page.locator("#exportBtnDropdown a[data-export-template-id='111']"),
+            page.locator(
+                "#exportBtnDropdown a[data-export-template-name='Basic Layout']"
+            ),
+            page.locator("#exportBtnDropdown a", has_text="Basic Layout"),
+            page.get_by_text("Basic Layout", exact=True),
+        ],
+        "Rithum Basic Layout export option",
+        timeout_ms=30000,
+    )
+    _wait_for_network_idle(page)
+    _log_step("Step 1.13: Requested Basic Layout order export")
+
+    open_rithum_order_export_status_page(page)
+    _log_step("Step 1.14: Opened Rithum order export status page")
+    return download_latest_rithum_basic_layout_export(
+        page, output_path, user_email, requested_after_ms
+    )
+
+
+def open_rithum_order_export_status_page(page: Page) -> None:
+    try:
+        _click_first_visible(
+            [
+                page.locator("a").filter(
+                    has_text=re.compile(r"Order Upload/Download Status page", re.I)
+                ),
+                page.locator("a[href*='/Orders/UploadDownload.mvc/List']"),
+            ],
+            "Rithum Order Upload/Download Status page link",
+            timeout_ms=5000,
+        )
+    except RuntimeError:
+        parsed = urlsplit(page.url)
+        status_url = urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                "/Orders/UploadDownload.mvc/List",
+                parsed.query,
+                "",
+            )
+        )
+        page.goto(status_url, wait_until="domcontentloaded")
+
+    _wait_for_network_idle(page)
+
+
+def download_latest_rithum_basic_layout_export(
+    page: Page, output_path: Path, user_email: str, requested_after_ms: int
+) -> Path:
+    deadline = time.monotonic() + 900
+    last_status = ""
+
+    while time.monotonic() < deadline:
+        export_row = _latest_rithum_basic_layout_export(
+            page, user_email, requested_after_ms
+        )
+        status = export_row.get("status", "not found") if export_row else "not found"
+
+        if status != last_status:
+            elapsed = int((int(time.time() * 1000) - requested_after_ms) / 1000)
+            remaining = max(0, int(deadline - time.monotonic()))
+            print(
+                "[WAIT] Step 1.15: "
+                f"Rithum Basic Layout export status is '{status}'. "
+                f"Waiting up to {remaining}s more (elapsed {elapsed}s)."
+            )
+            last_status = status
+
+        if export_row and status.lower() == "complete":
+            downloaded_path = download_rithum_export_from_status_page(
+                page, export_row, output_path
+            )
+            _log_step(
+                f"Step 1.15: Downloaded completed Basic Layout export to {downloaded_path}"
+            )
+            return downloaded_path
+
+        page.wait_for_timeout(10000)
+        page.reload(wait_until="domcontentloaded")
+        _wait_for_network_idle(page)
+
+    raise RuntimeError(
+        "Timed out waiting for the Rithum Basic Layout export to complete."
+    )
+
+
+def _latest_rithum_basic_layout_export(
+    page: Page, user_email: str, requested_after_ms: int
+) -> dict[str, Any] | None:
+    return page.evaluate(
+        """
+        ({ userEmail, requestedAfterMs }) => {
+            const email = String(userEmail || "").trim().toLowerCase();
+            const minSubmittedMs = Number(requestedAfterMs || 0) - 120000;
+
+            function parseSubmittedDate(text) {
+                const normalized = String(text || "").replace(/\\s+/g, " ").trim();
+                const parsed = Date.parse(normalized);
+                if (!Number.isNaN(parsed)) {
+                    return parsed;
+                }
+
+                const match = normalized.match(
+                    /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})\\s+(\\d{1,2}):(\\d{2})\\s*(AM|PM)?$/i
+                );
+                if (!match) {
+                    return null;
+                }
+
+                let [, month, day, year, hour, minute, meridiem] = match;
+                month = Number(month);
+                day = Number(day);
+                year = Number(year);
+                hour = Number(hour);
+                minute = Number(minute);
+                if (meridiem && meridiem.toUpperCase() === "PM" && hour < 12) {
+                    hour += 12;
+                }
+                if (meridiem && meridiem.toUpperCase() === "AM" && hour === 12) {
+                    hour = 0;
+                }
+                return new Date(year, month - 1, day, hour, minute).getTime();
+            }
+
+            const rows = Array.from(document.querySelectorAll("tr"));
+            const matches = [];
+
+            for (const row of rows) {
+                const cells = Array.from(row.querySelectorAll("td"));
+                if (!cells.length) {
+                    continue;
+                }
+
+                const cellTexts = cells.map((cell) =>
+                    String(cell.innerText || "").replace(/\\s+/g, " ").trim()
+                );
+                const rowText = cellTexts.join(" ").toLowerCase();
+                const fileLink = Array.from(row.querySelectorAll("a")).find((link) =>
+                    /basic[_\\s-]*layout/i.test(String(link.innerText || ""))
+                );
+
+                if (!rowText.includes("orders export")) {
+                    continue;
+                }
+                if (!fileLink) {
+                    continue;
+                }
+                if (email && !rowText.includes(email)) {
+                    continue;
+                }
+
+                const submittedText =
+                    cellTexts.find((text) => /\\d{1,2}\\/\\d{1,2}\\/\\d{4}/.test(text)) ||
+                    "";
+                const submittedMs = parseSubmittedDate(submittedText);
+                if (submittedMs !== null && submittedMs < minSubmittedMs) {
+                    continue;
+                }
+
+                const status =
+                    cellTexts.find((text) => /^(complete|processing|queued|pending|failed)$/i.test(text)) ||
+                    "unknown";
+
+                matches.push({
+                    status,
+                    submittedMs: submittedMs || 0,
+                    submittedText,
+                    fileName: String(fileLink.innerText || "").trim(),
+                    downloadKey:
+                        row.getAttribute("data-key") ||
+                        (String(fileLink.getAttribute("onclick") || "").match(/processDownload\\((\\d+)\\)/i) || [])[1] ||
+                        "",
+                    downloadUrl: fileLink.href,
+                });
+            }
+
+            matches.sort((left, right) => right.submittedMs - left.submittedMs);
+            return matches[0] || null;
+        }
+        """,
+        {"userEmail": user_email, "requestedAfterMs": requested_after_ms},
+    )
+
+
+def download_rithum_export_from_status_page(
+    page: Page, export_row: dict[str, Any], output_path: Path
+) -> Path:
+    file_name = str(export_row.get("fileName") or "").strip()
+    download_key = str(export_row.get("downloadKey") or "").strip()
+    last_error: Exception | None = None
+
+    link_locators = []
+    if download_key:
+        link_locators.append(page.locator(f"tr[data-key='{download_key}'] a"))
+    if file_name:
+        link_locators.append(page.locator("a").filter(has_text=file_name))
+
+    for locator in link_locators:
+        try:
+            locator.first.wait_for(state="visible", timeout=10000)
+            with page.expect_download(timeout=120000) as download_info:
+                locator.first.click(timeout=30000)
+            download = download_info.value
+            download.save_as(str(output_path))
+            validate_rithum_orders_download(output_path)
+            return output_path
+        except (PlaywrightTimeoutError, PlaywrightError) as error:
+            last_error = error
+
+    if download_key:
+        try:
+            with page.expect_download(timeout=120000) as download_info:
+                page.evaluate(
+                    """
+                    (downloadKey) => {
+                        const grid = window.OrdersUploadDownloadGrid;
+                        if (!grid || typeof grid.processDownload !== "function") {
+                            throw new Error(
+                                "OrdersUploadDownloadGrid.processDownload is not available."
+                            );
+                        }
+                        grid.processDownload(Number(downloadKey));
+                    }
+                    """,
+                    download_key,
+                )
+            download = download_info.value
+            download.save_as(str(output_path))
+            validate_rithum_orders_download(output_path)
+            return output_path
+        except (PlaywrightTimeoutError, PlaywrightError) as error:
+            last_error = error
+
+    raise RuntimeError(
+        "Rithum Basic Layout export is complete, but the file download could not be "
+        "captured from the status page."
+    ) from last_error
+
+
+def validate_rithum_orders_download(output_path: Path) -> None:
+    sample = output_path.read_text(encoding="utf-8", errors="ignore")[:4096].lstrip()
+    sample_lower = sample.lower()
+    if (
+        sample_lower.startswith("<!doctype")
+        or sample_lower.startswith("<html")
+        or "<title>imports/exports</title>" in sample_lower
+    ):
+        raise RuntimeError(
+            "The downloaded Rithum order export looks like an HTML page, not the "
+            "Basic Layout order file. The status-page file link may not have triggered "
+            "a real browser download."
+        )
 
 
 def match_order_file_to_dc_shipping_report(config: Config) -> Path | None:
@@ -1216,6 +1752,12 @@ def run(config: Config) -> None:
         page = context.new_page()
 
         try:
+            if config.rithum_enabled:
+                rithum_orders_path = begin_rithum_browser_order_download(page, config)
+                _log_step(f"Step 1: Downloaded Rithum orders to {rithum_orders_path}")
+            else:
+                _log_step("Step 1: Skipped Rithum browser download")
+
             login = LoginFlow(page, config)
             login.open()
             login.fill_credentials()
@@ -1223,12 +1765,6 @@ def run(config: Config) -> None:
             page.wait_for_load_state("domcontentloaded")
             login.verify()
             _log_step("Step 3: Login to Helm")
-
-            if config.rithum_enabled:
-                rithum_orders_path = download_rithum_orders(config)
-                _log_step(f"Step 1: Download Rithum orders to {rithum_orders_path}")
-            else:
-                _log_step("Step 1: Skipped Rithum API until credentials are ready")
 
             open_reports_page(page, config)
             _log_step("Step 3.1: Open Reports page")
