@@ -199,6 +199,58 @@ def open_orders_reports_section(page: Page) -> None:
     _wait_for_network_idle(page)
 
 
+def click_orders_export_download_report_button(page: Page) -> None:
+    clicked = page.evaluate("""() => {
+                const isVisible = el => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden'
+                        && style.display !== 'none'
+                        && rect.width > 0
+                        && rect.height > 0;
+                };
+
+                const exactButton = document.querySelector(
+                    ".panel-body[export-service-id='2'] " +
+                    "input[export-service-button='2'][name='create_report']"
+                );
+                if (exactButton && isVisible(exactButton)) {
+                    exactButton.scrollIntoView({block: 'center', inline: 'center'});
+                    exactButton.click();
+                    return true;
+                }
+
+                const ordersExportPanels = Array.from(
+                    document.querySelectorAll(".panel")
+                ).filter(panel => /Orders\\s+Export/i.test(panel.innerText || ""));
+
+                for (const panel of ordersExportPanels) {
+                    const button = Array.from(
+                        panel.querySelectorAll(
+                            "input[name='create_report'], input[type='submit'], " +
+                            "button[type='submit'], button"
+                        )
+                    ).find(el => isVisible(el)
+                        && /Download\\s+Report/i.test(
+                            `${el.value || ''} ${el.innerText || ''} ${el.textContent || ''}`
+                        ));
+
+                    if (button) {
+                        button.scrollIntoView({block: 'center', inline: 'center'});
+                        button.click();
+                        return true;
+                    }
+                }
+
+                return false;
+            }""")
+    if not clicked:
+        raise RuntimeError(
+            "Could not find the Orders Export Download Report button."
+        )
+    _wait_for_network_idle(page)
+
+
 def download_full_orders_report(page: Page, config: Config) -> Path:
     config.download_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1335,6 +1387,9 @@ def run_stage2_steps(page: Page, config: Config) -> None:
     )
     _wait_for_network_idle(page)
     _log_step("Step 2.1: Open Helm Imports/Exports Orders page")
+
+    click_orders_export_download_report_button(page)
+    _log_step("Step 2.2: Click Orders Export Download Report button")
 
     open_reports_page(page, config)
     _log_step("Step 2.3: Open Reports page")
