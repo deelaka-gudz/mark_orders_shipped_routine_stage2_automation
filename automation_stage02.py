@@ -1329,12 +1329,18 @@ def _tracking_number_with_incremented_suffix(seed: str, offset: int) -> str:
 
 def run_stage2_steps(page: Page, config: Config) -> None:
     _log_info(config.debug, f"Stage 2 starting from: {page.url}")
+    page.goto(
+        "https://mybeautyandcareltd1.myhelm.app/imports_exports/orders",
+        wait_until="domcontentloaded",
+    )
+    _wait_for_network_idle(page)
+    _log_step("Step 2.1: Open Helm Imports/Exports Orders page")
 
     open_reports_page(page, config)
-    _log_step("Step 2.1: Open Reports page")
+    _log_step("Step 2.3: Open Reports page")
 
     open_orders_reports_section(page)
-    _log_step("Step 2.2: Open Orders reports section")
+    _log_step("Step 2.4: Open Orders reports section")
 
     downloaded_path = download_full_orders_report(page, config)
     _log_step(f"Step 3: Download Full Orders Report to {downloaded_path}")
