@@ -876,6 +876,36 @@ def open_rithum_order_export_status_page(page: Page) -> None:
     _wait_for_network_idle(page)
 
 
+def refresh_rithum_order_export_status_page(page: Page) -> None:
+    try:
+        page.reload(wait_until="domcontentloaded", timeout=15000)
+    except PlaywrightTimeoutError:
+        print(
+            "[WAIT] Step 1.15: Rithum status page refresh timed out; "
+            "checking the current table again."
+        )
+    except PlaywrightError:
+        parsed = urlsplit(page.url)
+        status_url = urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                "/Orders/UploadDownload.mvc/List",
+                parsed.query,
+                "",
+            )
+        )
+        try:
+            page.goto(status_url, wait_until="domcontentloaded", timeout=15000)
+        except PlaywrightTimeoutError:
+            print(
+                "[WAIT] Step 1.15: Rithum status page navigation timed out; "
+                "checking the current table again."
+            )
+
+    _wait_for_network_idle(page, timeout_ms=5000)
+
+
 def download_latest_rithum_basic_layout_export(
     page: Page, output_path: Path, user_email: str, requested_after_ms: int
 ) -> Path:
@@ -908,8 +938,7 @@ def download_latest_rithum_basic_layout_export(
             return downloaded_path
 
         page.wait_for_timeout(10000)
-        page.reload(wait_until="domcontentloaded")
-        _wait_for_network_idle(page)
+        refresh_rithum_order_export_status_page(page)
 
     raise RuntimeError(
         "Timed out waiting for the Rithum Basic Layout export to complete."
@@ -970,11 +999,18 @@ def _latest_rithum_basic_layout_export(
                 const fileLink = Array.from(row.querySelectorAll("a")).find((link) =>
                     /basic[_\\s-]*layout/i.test(String(link.innerText || ""))
                 );
+                const fileNameText = fileLink
+                    ? String(fileLink.innerText || "").trim()
+                    : (
+                        cellTexts.find((text) =>
+                            /basic[_\\s-]*layout/i.test(text)
+                        ) || ""
+                    );
 
                 if (!rowText.includes("orders export")) {
                     continue;
                 }
-                if (!fileLink) {
+                if (!fileNameText && !/basic[_\\s-]*layout/i.test(rowText)) {
                     continue;
                 }
                 if (email && !rowText.includes(email)) {
@@ -997,12 +1033,12 @@ def _latest_rithum_basic_layout_export(
                     status,
                     submittedMs: submittedMs || 0,
                     submittedText,
-                    fileName: String(fileLink.innerText || "").trim(),
+                    fileName: fileNameText,
                     downloadKey:
                         row.getAttribute("data-key") ||
-                        (String(fileLink.getAttribute("onclick") || "").match(/processDownload\\((\\d+)\\)/i) || [])[1] ||
+                        (fileLink ? (String(fileLink.getAttribute("onclick") || "").match(/processDownload\\((\\d+)\\)/i) || [])[1] : "") ||
                         "",
-                    downloadUrl: fileLink.href,
+                    downloadUrl: fileLink ? fileLink.href : "",
                 });
             }
 
@@ -1331,8 +1367,8 @@ def open_shipping_reports_section(page: Page) -> None:
 def download_shipping_report(page: Page, config: Config) -> Path:
     config.download_dir.mkdir(parents=True, exist_ok=True)
 
-    requested_after_ms = int(time.time() * 1000)
-    request_shipping_report_export(page, config)
+    requested_after_ms = request_shipping_report_export(page, config)
+    open_helm_export_history(page, config)
 
     return download_completed_shipping_report_from_history(
         page,
@@ -1341,7 +1377,7 @@ def download_shipping_report(page: Page, config: Config) -> Path:
     )
 
 
-def request_shipping_report_export(page: Page, config: Config) -> None:
+def request_shipping_report_export(page: Page, config: Config) -> int:
     reports_path = "/reports-new/download"
     if reports_path not in page.url:
         page.goto(
@@ -1349,14 +1385,33 @@ def request_shipping_report_export(page: Page, config: Config) -> None:
             wait_until="domcontentloaded",
         )
         _wait_for_network_idle(page)
-        open_shipping_reports_section(page)
 
-    _log_step("Step 3.2.1: Click Shipping Report download/request button")
+    open_shipping_reports_section(page)
+    _log_step("Step 3.2.1: Open Shipping reports section")
+
+    try:
+        page.locator("form[data-report-name='dc_shipping_report']").first.wait_for(
+            state="visible",
+            timeout=15000,
+        )
+    except PlaywrightTimeoutError as exc:
+        raise RuntimeError(
+            "Could not find the Helm Shipping Report form after opening the "
+            "Shipping reports section."
+        ) from exc
+
+    requested_after_ms = int(time.time() * 1000)
     if not _click_shipping_report_request(page):
         raise RuntimeError("Could not find the Shipping Report export request button.")
 
+    _log_step("Step 3.2.2: Click Shipping Report Download Report button")
+    page.wait_for_timeout(1500)
     _wait_for_network_idle(page)
-    _log_step("Step 3.2.2: Open Helm Export History")
+    return requested_after_ms
+
+
+def open_helm_export_history(page: Page, config: Config) -> None:
+    _log_step("Step 3.2.3: Open Helm Export History after requesting Shipping Report")
     page.goto(
         f"{_origin_url(config.helm_url)}/reports-new/history",
         wait_until="domcontentloaded",
@@ -1385,48 +1440,52 @@ def _click_shipping_report_request(page: Page) -> bool:
                     el.getAttribute('name')
                 ].filter(Boolean).join(' ');
 
-                const containersFor = el => {
-                    const containers = [];
-                    let current = el;
-                    for (let i = 0; current && i < 8; i += 1) {
-                        containers.push(current);
-                        current = current.parentElement;
-                    }
-                    return containers;
+                const requestSelector =
+                    "input[name='create_report'], input[type='submit'], " +
+                    "button[type='submit'], button";
+
+                const isRequestControl = el => {
+                    return el.getAttribute('name') === 'create_report'
+                        || /download\\s+report|create|request|export/i.test(textOf(el));
                 };
 
-                const candidates = Array.from(
-                    document.querySelectorAll(
-                        "input[name='create_report'], input[type='submit'], button, a"
-                    )
-                ).filter(isVisible);
+                const click = el => {
+                    el.scrollIntoView({block: 'center', inline: 'center'});
+                    el.click();
+                    return true;
+                };
+
+                const exactForm = document.querySelector(
+                    "form[data-report-name='dc_shipping_report']"
+                );
+                if (exactForm) {
+                    const exactButton = Array.from(exactForm.querySelectorAll(requestSelector))
+                        .find(el => isVisible(el) && isRequestControl(el));
+                    if (exactButton) {
+                        return click(exactButton);
+                    }
+                }
+
+                const candidates = Array.from(document.querySelectorAll(requestSelector))
+                    .filter(el => isVisible(el) && isRequestControl(el));
 
                 for (const candidate of candidates) {
-                    const combined = containersFor(candidate)
-                        .map(textOf)
-                        .join(' ');
+                    let current = candidate;
+                    let combined = '';
+                    for (let i = 0; current && i < 8; i += 1) {
+                        combined += ' ' + textOf(current);
+                        current = current.parentElement;
+                    }
+
                     const reportName = candidate.closest('form')?.getAttribute('data-report-name') || '';
                     const haystack = `${combined} ${reportName}`;
 
                     const isShipping = /shipping\\s+report|dc_shipping_report/i.test(haystack);
-                    const isPurchase = /purchase\\s+order|dc_purchase/i.test(haystack);
-                    const canRequest = /create|request|export|download|report/i.test(haystack);
+                    const isOtherReport = /purchase\\s+order|dc_purchase|ioss\\s+report/i.test(haystack);
 
-                    if (isShipping && !isPurchase && canRequest) {
-                        candidate.scrollIntoView({block: 'center', inline: 'center'});
-                        candidate.click();
-                        return true;
+                    if (isShipping && !isOtherReport) {
+                        return click(candidate);
                     }
-                }
-
-                const exactFormButton = document.querySelector(
-                    "form[data-report-name='dc_shipping_report'] input[name='create_report'], " +
-                    "form[data-report-name='dc_shipping_report'] button[type='submit']"
-                );
-                if (exactFormButton && isVisible(exactFormButton)) {
-                    exactFormButton.scrollIntoView({block: 'center', inline: 'center'});
-                    exactFormButton.click();
-                    return true;
                 }
 
                 return false;
@@ -1450,10 +1509,6 @@ def download_completed_shipping_report_from_history(
     )
     deadline = time.monotonic() + config.helm_report_ready_timeout_seconds
     last_logged_status: str | None = None
-    retry_count = 0
-    max_retries = 3
-    not_found_refresh_count = 0
-    max_not_found_refreshes = 5
 
     while time.monotonic() < deadline:
         status = _latest_shipping_report_status(page, user_hint, requested_after_ms)
@@ -1471,38 +1526,13 @@ def download_completed_shipping_report_from_history(
             )
             last_logged_status = normalized_status
 
-        if normalized_status.lower() == "not found":
-            not_found_refresh_count += 1
-            if not_found_refresh_count > max_not_found_refreshes:
-                print(
-                    "[WARN] Step 3.2.4: No Shipping Report row for this user/request "
-                    f"was found after {max_not_found_refreshes} refresh checks. "
-                    "Requesting a fresh export."
-                )
-                requested_after_ms = int(time.time() * 1000)
-                request_shipping_report_export(page, config)
-                not_found_refresh_count = 0
-                last_logged_status = None
-                continue
-        else:
-            not_found_refresh_count = 0
-
         if normalized_status.lower() in {"cancelled", "failed"}:
-            if retry_count >= max_retries:
-                raise RuntimeError(
-                    "Requested Shipping Report status is "
-                    f"'{normalized_status}' after {retry_count} retry attempts."
-                )
-            retry_count += 1
-            print(
-                "[WARN] Step 3.2.4: Shipping Report export ended as "
-                f"'{normalized_status}'. Requesting a fresh export "
-                f"(attempt {retry_count}/{max_retries})."
+            raise RuntimeError(
+                "Requested Helm Shipping Report export ended as "
+                f"'{normalized_status}'. The script will not request another "
+                "Shipping Report during the same run. Check Helm Export History "
+                "and start a new run when you are ready to request it again."
             )
-            requested_after_ms = int(time.time() * 1000)
-            request_shipping_report_export(page, config)
-            last_logged_status = None
-            continue
         if status and status.lower() == "completed":
             _log_step("Step 3.2.5: Shipping Report is completed and ready to download")
             download_url = _latest_shipping_report_download_url(
@@ -1532,7 +1562,13 @@ def download_completed_shipping_report_from_history(
             return downloaded_path
 
         page.wait_for_timeout(10000)
-        page.reload(wait_until="domcontentloaded")
+        try:
+            page.reload(wait_until="domcontentloaded", timeout=15000)
+        except PlaywrightTimeoutError:
+            print(
+                "[WAIT] Step 3.2.4: Helm Export History refresh timed out; "
+                "checking the current table again."
+            )
         _wait_for_network_idle(page)
 
     raise RuntimeError(
@@ -1768,9 +1804,6 @@ def run(config: Config) -> None:
 
             open_reports_page(page, config)
             _log_step("Step 3.1: Open Reports page")
-
-            open_shipping_reports_section(page)
-            _log_step("Step 3.2: Open Shipping reports section")
 
             downloaded_path = download_shipping_report(page, config)
             _log_step(f"Step 4: Download Shipping report to {downloaded_path}")
