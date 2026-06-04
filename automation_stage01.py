@@ -272,7 +272,7 @@ class Config:
     rithum_shared_secret: str | None
     rithum_refresh_token: str | None
     rithum_orders_output_path: Path
-    order_file_path: Path | None
+    rithum_orders_output_path: Path | None
     dc_shipping_report_path: Path | None
     matched_output_path: Path
     non_gb_output_path: Path
@@ -297,82 +297,41 @@ class Config:
         dotenv_values_map = dotenv_values(dotenv_path, encoding="utf-8-sig")
 
         return Config(
-            helm_url=(
-                os.getenv("HELM_URL") or "https://mybeautyandcareltd.myhelm.app/"
-            ).strip(),
+            helm_url=(os.getenv("HELM_URL")).strip(),
             email=_require_env("HELM_EMAIL").strip(),
             password=_require_env("HELM_PASSWORD"),
-            download_dir=Path(
-                os.getenv("HELM_REPORT_DOWNLOAD_DIR") or "downloads"
-            ).resolve(),
+            download_dir=Path("downloads").resolve(),
             rithum_enabled=_env_flag("RITHUM_ENABLED", default=False),
-            rithum_login_url=(
-                os.getenv("RITHUM_LOGIN_URL") or "https://login.channeladvisor.com/"
-            ).strip(),
+            rithum_login_url=("https://login.channeladvisor.com/").strip(),
             rithum_email=_require_env("HELM_EMAIL").strip(),
             rithum_password=_dotenv_or_env(dotenv_values_map, "RITHUM_PASSWORD") or "",
-            rithum_account_name=(
-                os.getenv("RITHUM_ACCOUNT_NAME") or "My Beauty And Care - UK"
-            ).strip(),
+            rithum_account_name=("My Beauty And Care - UK").strip(),
             rithum_order_filter_name=(
-                os.getenv("RITHUM_ORDER_FILTER_NAME")
-                or "ship by excludes prime/premium as of 19/11/2025"
+                "ship by excludes prime/premium as of 19/11/2025"
             ).strip(),
-            rithum_base_url=(
-                os.getenv("RITHUM_BASE_URL") or "https://api.channeladvisor.com"
-            ).strip(),
+            rithum_base_url=("https://api.channeladvisor.com").strip(),
             rithum_application_id=(os.getenv("RITHUM_APPLICATION_ID") or "").strip()
             or None,
             rithum_shared_secret=os.getenv("RITHUM_SHARED_SECRET") or None,
             rithum_refresh_token=os.getenv("RITHUM_REFRESH_TOKEN") or None,
-            rithum_orders_output_path=Path(
-                os.getenv("RITHUM_ORDERS_OUTPUT_PATH") or "downloads/rithum_orders.csv"
-            ).resolve(),
-            order_file_path=(
-                Path(os.getenv("ORDER_FILE_PATH", "")).resolve()
-                if os.getenv("ORDER_FILE_PATH")
-                else None
-            ),
-            dc_shipping_report_path=(
-                Path(os.getenv("DC_SHIPPING_REPORT_PATH", "")).resolve()
-                if os.getenv("DC_SHIPPING_REPORT_PATH")
-                else None
-            ),
-            matched_output_path=Path(
-                os.getenv("MATCHED_OUTPUT_PATH") or "downloads/matched_orders.csv"
-            ).resolve(),
-            non_gb_output_path=Path(
-                os.getenv("NON_GB_OUTPUT_PATH") or "downloads/non_gb_orders_review.csv"
-            ).resolve(),
+            rithum_orders_output_path=Path("downloads/rithum_orders.csv").resolve(),
+            dc_shipping_report_path=Path("downloads/dc_shipping_report.csv").resolve(),
+            matched_output_path=Path("downloads/matched_orders.csv").resolve(),
+            non_gb_output_path=Path("downloads/non_gb_orders_review.csv").resolve(),
             non_gb_airmail_output_path=Path(
-                os.getenv("NON_GB_AIRMAIL_OUTPUT_PATH")
-                or "downloads/non_gb_orders_airmail.csv"
+                "downloads/non_gb_orders_airmail.csv"
             ).resolve(),
             non_gb_with_dc_date_output_path=Path(
-                os.getenv("NON_GB_WITH_DC_DATE_OUTPUT_PATH")
-                or "downloads/non_gb_orders_with_dc_date_review.csv"
+                "downloads/non_gb_orders_with_dc_date_review.csv"
             ).resolve(),
             non_gb_unmatched_output_path=Path(
-                os.getenv("NON_GB_UNMATCHED_OUTPUT_PATH")
-                or "downloads/non_gb_unmatched_orders_review.csv"
+                "downloads/non_gb_unmatched_orders_review.csv"
             ).resolve(),
-            match_key_column=(os.getenv("MATCH_KEY_COLUMN") or "Order ID").strip(),
-            order_match_key_column=(
-                os.getenv("ORDER_MATCH_KEY_COLUMN")
-                or os.getenv("MATCH_KEY_COLUMN")
-                or "Order ID"
-            ).strip(),
-            dc_match_key_column=(
-                os.getenv("DC_MATCH_KEY_COLUMN")
-                or os.getenv("MATCH_KEY_COLUMN")
-                or "Order ID"
-            ).strip(),
-            shipping_country_column=(
-                os.getenv("SHIPPING_COUNTRY_COLUMN") or "ShippingCountry"
-            ).strip(),
-            helm_report_ready_timeout_seconds=int(
-                os.getenv("HELM_REPORT_READY_TIMEOUT_SECONDS") or "900"
-            ),
+            match_key_column=("Order ID").strip(),
+            order_match_key_column=("Site Order ID").strip(),
+            dc_match_key_column=("Order ID").strip(),
+            shipping_country_column=("ShippingCountry").strip(),
+            helm_report_ready_timeout_seconds=int("2400"),
             rithum_orders_query_string=(
                 os.getenv("RITHUM_ORDERS_QUERY_STRING") or "$top=100"
             ).strip(),
@@ -1121,12 +1080,12 @@ def validate_rithum_orders_download(output_path: Path) -> None:
 
 
 def match_order_file_to_dc_shipping_report(config: Config) -> Path | None:
-    if not config.order_file_path or not config.dc_shipping_report_path:
+    if not config.rithum_orders_output_path or not config.dc_shipping_report_path:
         _log_step("Step 6: Skipped matching until order/DC file paths are configured")
         return None
 
     _log_step("Step 6: Read order file and DC Shipping Report")
-    order_rows = _read_csv(config.order_file_path)
+    order_rows = _read_csv(config.rithum_orders_output_path)
     dc_rows = _read_csv(config.dc_shipping_report_path)
     order_key_column = config.order_match_key_column
     dc_key_column = config.dc_match_key_column
