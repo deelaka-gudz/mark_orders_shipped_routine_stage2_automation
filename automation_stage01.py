@@ -1,4 +1,3 @@
-import base64
 import csv
 import os
 import re
@@ -6,14 +5,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
-from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from dotenv import dotenv_values, load_dotenv
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
-import requests
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 
@@ -261,16 +259,11 @@ class Config:
     email: str
     password: str
     download_dir: Path
-    rithum_enabled: bool
     rithum_login_url: str
     rithum_email: str
     rithum_password: str
     rithum_account_name: str
     rithum_order_filter_name: str
-    rithum_base_url: str
-    rithum_application_id: str | None
-    rithum_shared_secret: str | None
-    rithum_refresh_token: str | None
     rithum_orders_output_path: Path
     rithum_orders_output_path: Path | None
     dc_shipping_report_path: Path | None
@@ -284,7 +277,6 @@ class Config:
     dc_match_key_column: str
     shipping_country_column: str
     helm_report_ready_timeout_seconds: int
-    rithum_orders_query_string: str
     rithum_max_pages: int
     helm_manual_login_fallback: bool
     helm_manual_login_timeout_seconds: int
@@ -297,11 +289,10 @@ class Config:
         dotenv_values_map = dotenv_values(dotenv_path, encoding="utf-8-sig")
 
         return Config(
-            helm_url=(os.getenv("HELM_URL")).strip(),
+            helm_url=("https://mybeautyandcareltd1.myhelm.app/login.php?type=standard").strip(),
             email=_require_env("HELM_EMAIL").strip(),
             password=_require_env("HELM_PASSWORD"),
             download_dir=Path("downloads").resolve(),
-            rithum_enabled=_env_flag("RITHUM_ENABLED", default=False),
             rithum_login_url=("https://login.channeladvisor.com/").strip(),
             rithum_email=_require_env("HELM_EMAIL").strip(),
             rithum_password=_dotenv_or_env(dotenv_values_map, "RITHUM_PASSWORD") or "",
@@ -309,11 +300,6 @@ class Config:
             rithum_order_filter_name=(
                 "ship by excludes prime/premium as of 19/11/2025"
             ).strip(),
-            rithum_base_url=("https://api.channeladvisor.com").strip(),
-            rithum_application_id=(os.getenv("RITHUM_APPLICATION_ID") or "").strip()
-            or None,
-            rithum_shared_secret=os.getenv("RITHUM_SHARED_SECRET") or None,
-            rithum_refresh_token=os.getenv("RITHUM_REFRESH_TOKEN") or None,
             rithum_orders_output_path=Path("downloads/rithum_orders.csv").resolve(),
             dc_shipping_report_path=Path("downloads/dc_shipping_report.csv").resolve(),
             matched_output_path=Path("downloads/matched_orders.csv").resolve(),
@@ -332,9 +318,6 @@ class Config:
             dc_match_key_column=("Order ID").strip(),
             shipping_country_column=("ShippingCountry").strip(),
             helm_report_ready_timeout_seconds=int("2400"),
-            rithum_orders_query_string=(
-                os.getenv("RITHUM_ORDERS_QUERY_STRING") or "$top=100"
-            ).strip(),
             rithum_max_pages=int(os.getenv("RITHUM_MAX_PAGES") or "20"),
             helm_manual_login_fallback=_env_flag(
                 "HELM_MANUAL_LOGIN_FALLBACK", default=True
@@ -450,91 +433,11 @@ def _build_dc_order_lookup(
     return lookup
 
 
-def _query_params(query_string: str) -> dict[str, str]:
-    if not query_string:
-        return {}
-    return dict(parse_qsl(query_string, keep_blank_values=True))
-
-
 def _origin_url(url: str) -> str:
     parsed = urlsplit(url)
     if not parsed.scheme or not parsed.netloc:
         return url.rstrip("/")
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", "")).rstrip("/")
-
-
-class RithumClient:
-    def __init__(self, config: Config):
-        self.config = config
-        self.base_url = config.rithum_base_url.rstrip("/")
-
-    def get_access_token(self) -> str:
-        if (
-            not self.config.rithum_application_id
-            or not self.config.rithum_shared_secret
-            or not self.config.rithum_refresh_token
-        ):
-            raise RuntimeError(
-                "Missing Rithum API credentials. Set RITHUM_APPLICATION_ID, "
-                "RITHUM_SHARED_SECRET, and RITHUM_REFRESH_TOKEN."
-            )
-
-        credentials = (
-            f"{self.config.rithum_application_id}:"
-            f"{self.config.rithum_shared_secret}"
-        )
-        basic_token = base64.b64encode(credentials.encode("utf-8")).decode("ascii")
-
-        response = requests.post(
-            f"{self.base_url}/oauth2/token",
-            headers={
-                "Authorization": f"Basic {basic_token}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": self.config.rithum_refresh_token,
-            },
-            timeout=60,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        return payload["access_token"]
-
-    def fetch_orders(self) -> list[dict[str, Any]]:
-        access_token = self.get_access_token()
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "application/json",
-        }
-        url: str | None = f"{self.base_url}/v1/orders"
-        params: dict[str, str] | None = _query_params(
-            self.config.rithum_orders_query_string
-        )
-        rows: list[dict[str, Any]] = []
-        page_count = 0
-
-        while url and page_count < self.config.rithum_max_pages:
-            response = requests.get(url, headers=headers, params=params, timeout=60)
-            response.raise_for_status()
-            payload = response.json()
-            page_rows = payload.get("value", [])
-
-            if not isinstance(page_rows, list):
-                raise RuntimeError("Unexpected Rithum orders response shape.")
-
-            rows.extend(page_rows)
-            url = payload.get("@odata.nextLink")
-            params = None
-            page_count += 1
-
-        return rows
-
-
-def download_rithum_orders(config: Config) -> Path:
-    orders = RithumClient(config).fetch_orders()
-    _write_csv(config.rithum_orders_output_path, orders)
-    return config.rithum_orders_output_path
 
 
 def begin_rithum_browser_order_download(page: Page, config: Config) -> Path:
@@ -1747,12 +1650,8 @@ def run(config: Config) -> None:
         page = context.new_page()
 
         try:
-            if config.rithum_enabled:
-                rithum_orders_path = begin_rithum_browser_order_download(page, config)
-                _log_step(f"Step 1: Downloaded Rithum orders to {rithum_orders_path}")
-            else:
-                _log_step("Step 1: Skipped Rithum browser download")
-
+            rithum_orders_path = begin_rithum_browser_order_download(page, config)
+            _log_step(f"Step 1: Downloaded Rithum orders to {rithum_orders_path}")
             login = LoginFlow(page, config)
             login.open()
             login.fill_credentials()

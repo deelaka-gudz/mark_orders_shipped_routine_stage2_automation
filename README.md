@@ -220,76 +220,7 @@ python -m playwright install
 
 ## Environment Variables
 
-Create a `.env` file in the repo root:
-
-```env
-HELM_URL=https://mybeautyandcareltd.myhelm.app/
-HELM_EMAIL=your_email@example.com
-HELM_PASSWORD=your_password
-
-RITHUM_BASE_URL=https://api.channeladvisor.com
-
-# Optional
-HELM_REPORT_DOWNLOAD_DIR=downloads
-HELM_REPORT_READY_TIMEOUT_SECONDS=900
-RITHUM_ENABLED=false
-RITHUM_APPLICATION_ID=
-RITHUM_SHARED_SECRET=
-RITHUM_REFRESH_TOKEN=
-RITHUM_ORDERS_OUTPUT_PATH=downloads/rithum_orders.csv
-ORDER_FILE_PATH=
-DC_SHIPPING_REPORT_PATH=
-MATCHED_OUTPUT_PATH=downloads/matched_orders.csv
-NON_GB_OUTPUT_PATH=downloads/non_gb_orders_review.csv
-NON_GB_AIRMAIL_OUTPUT_PATH=downloads/non_gb_orders_airmail.csv
-NON_GB_WITH_DC_DATE_OUTPUT_PATH=downloads/non_gb_orders_with_dc_date_review.csv
-NON_GB_UNMATCHED_OUTPUT_PATH=downloads/non_gb_unmatched_orders_review.csv
-FULL_ORDERS_MATCHED_OUTPUT_PATH=downloads/stage2_full_orders_matched.csv
-TRACKING_UPLOAD_OUTPUT_PATH=downloads/tracking_upload_template.txt
-COURIER_CONVERSIONS_PATH=courier_conversions.json
-UNMAPPED_COURIER_SERVICES_OUTPUT_PATH=downloads/unmapped_courier_services.csv
-MATCH_KEY_COLUMN=Order ID
-ORDER_MATCH_KEY_COLUMN=SiteOrderID
-DC_MATCH_KEY_COLUMN=Order ID
-SHIPPING_COUNTRY_COLUMN=ShippingCountry
-FULL_ORDERS_MATCH_KEY_COLUMN=SiteOrderID
-FULL_ORDERS_REPORT_KEY_COLUMN=Channel Order ID
-RITHUM_ORDERS_QUERY_STRING=$top=100
-RITHUM_MAX_PAGES=20
-HEADLESS=false
-DEBUG=false
-```
-
-Optional values:
-
-- `HELM_REPORT_DOWNLOAD_DIR`: where downloaded reports are saved.
-- `HELM_REPORT_READY_TIMEOUT_SECONDS`: how long to wait for Helm's History export job to become `Completed`.
-- `RITHUM_ENABLED`: set to `true` after admin provides Rithum API credentials.
-- `RITHUM_APPLICATION_ID`: Rithum/ChannelAdvisor API application ID.
-- `RITHUM_SHARED_SECRET`: Rithum/ChannelAdvisor API shared secret.
-- `RITHUM_REFRESH_TOKEN`: Rithum/ChannelAdvisor API refresh token.
-- `RITHUM_ORDERS_OUTPUT_PATH`: where the Rithum orders CSV is saved.
-- `ORDER_FILE_PATH`: local order export CSV to match when the Rithum API step is skipped.
-- `DC_SHIPPING_REPORT_PATH`: detailed Helm `dc_shipping_report` CSV to match against.
-- `MATCHED_OUTPUT_PATH`: output CSV created by the Python VLOOKUP-style match.
-- `NON_GB_OUTPUT_PATH`: review CSV containing rows whose shipping country is not `GB`.
-- `NON_GB_AIRMAIL_OUTPUT_PATH`: non-GB CSV after filling missing DC values with `Airmail`.
-- `NON_GB_WITH_DC_DATE_OUTPUT_PATH`: non-GB review CSV containing rows that still have a real DC date after Airmail defaults.
-- `NON_GB_UNMATCHED_OUTPUT_PATH`: non-GB review CSV containing rows that had blank or `#N/A` DC Date before Airmail defaults.
-- `FULL_ORDERS_MATCHED_OUTPUT_PATH`: detailed Stage 2 output after matching Stage 1 unmatched rows to the Full Orders Report.
-- `TRACKING_UPLOAD_OUTPUT_PATH`: final tab-delimited tracking upload file shaped like the memorized upload template.
-- `COURIER_CONVERSIONS_PATH`: JSON file containing known courier service to Rithum carrier/class mappings.
-- `UNMAPPED_COURIER_SERVICES_OUTPUT_PATH`: review CSV listing raw courier services that did not exist in the conversion JSON.
-- `MATCH_KEY_COLUMN`: column name that exists in both files, for example `Order ID`.
-- `ORDER_MATCH_KEY_COLUMN`: order export column used for the Stage 1 lookup.
-- `DC_MATCH_KEY_COLUMN`: DC shipping report column used for the Stage 1 lookup.
-- `SHIPPING_COUNTRY_COLUMN`: country column used to reproduce the Excel non-GB filter.
-- `FULL_ORDERS_MATCH_KEY_COLUMN`: Stage 1 unmatched column used to match against the Full Orders Report.
-- `FULL_ORDERS_REPORT_KEY_COLUMN`: Full Orders Report column used for the Stage 2 lookup.
-- `RITHUM_ORDERS_QUERY_STRING`: OData query string passed to `/v1/orders`.
-- `RITHUM_MAX_PAGES`: maximum number of paginated Rithum API pages to read.
-- `HEADLESS`: set to `true` to run without opening the browser.
-- `DEBUG`: set to `true` for extra logging.
+Create a `.env` file in the repo root. Use `.env.example` as the template.
 
 ## Run
 

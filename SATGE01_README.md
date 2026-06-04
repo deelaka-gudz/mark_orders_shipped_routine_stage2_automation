@@ -95,52 +95,6 @@ python -m playwright install
 
 Create a `.env` file in the repo root. Use `.env.example` as the template.
 
-```env
-HELM_URL=https://mybeautyandcareltd1.myhelm.app/login.php?type=standard
-HELM_EMAIL=your_helm_email@example.com
-HELM_PASSWORD=your_helm_password
-
-HELM_REPORT_DOWNLOAD_DIR=downloads
-HELM_REPORT_READY_TIMEOUT_SECONDS=2400
-HELM_MANUAL_LOGIN_FALLBACK=true
-HELM_MANUAL_LOGIN_TIMEOUT_SECONDS=300
-
-RITHUM_ENABLED=true
-RITHUM_BASE_URL=https://api.channeladvisor.com
-RITHUM_APPLICATION_ID=
-RITHUM_SHARED_SECRET=
-RITHUM_REFRESH_TOKEN=
-RITHUM_ACCESS_TOKEN=
-RITHUM_ORDERS_OUTPUT_PATH=downloads/rithum_orders.csv
-RITHUM_ORDERS_QUERY_STRING=$top=100&$orderby=CreatedDateUtc desc
-RITHUM_MAX_PAGES=20
-
-ORDER_FILE_PATH=downloads/rithum_orders.csv
-DC_SHIPPING_REPORT_PATH=downloads/dc_shipping_report.csv
-MATCHED_OUTPUT_PATH=downloads/matched_orders.csv
-NON_GB_OUTPUT_PATH=downloads/non_gb_orders_review.csv
-NON_GB_AIRMAIL_OUTPUT_PATH=downloads/non_gb_orders_airmail.csv
-NON_GB_WITH_DC_DATE_OUTPUT_PATH=downloads/non_gb_orders_with_dc_date_review.csv
-NON_GB_UNMATCHED_OUTPUT_PATH=downloads/non_gb_unmatched_orders_review.csv
-
-MATCH_KEY_COLUMN=Order ID
-ORDER_MATCH_KEY_COLUMN=SiteOrderID
-DC_MATCH_KEY_COLUMN=Order ID
-SHIPPING_COUNTRY_COLUMN=ShippingCountry
-
-HEADLESS=false
-DEBUG=false
-```
-
-Important notes:
-
-- `HELM_EMAIL` and `HELM_PASSWORD` are for Helm, not the Rithum developer account.
-- `RITHUM_APPLICATION_ID`, `RITHUM_SHARED_SECRET`, and `RITHUM_REFRESH_TOKEN` come from the Rithum/ChannelAdvisor Developer Console.
-- `RITHUM_ACCESS_TOKEN` is optional. The script currently uses the refresh token to generate fresh access tokens automatically.
-- `RITHUM_ORDERS_QUERY_STRING` sorts by `CreatedDateUtc desc` so the API export contains recent orders first.
-- `HELM_REPORT_READY_TIMEOUT_SECONDS=2400` allows up to 40 minutes for slow Helm export jobs.
-- `HELM_MANUAL_LOGIN_FALLBACK=true` keeps the browser open if Helm rejects automated login, so you can log in manually and let the automation continue.
-
 ## Run
 
 ```powershell
