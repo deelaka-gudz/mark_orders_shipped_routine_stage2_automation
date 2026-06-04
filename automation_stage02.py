@@ -79,42 +79,26 @@ class Config:
 
         return Config(
             helm_url=(
-                os.getenv("HELM_URL") or "https://mybeautyandcareltd.myhelm.app/"
+                "https://mybeautyandcareltd1.myhelm.app/login.php?type=standard"
             ).strip(),
             email=_require_env("HELM_EMAIL").strip(),
             password=_require_env("HELM_PASSWORD"),
-            download_dir=Path(os.getenv("HELM_REPORT_DOWNLOAD_DIR") or "downloads"),
-            matched_output_path=Path(
-                os.getenv("MATCHED_OUTPUT_PATH") or "downloads/matched_orders.csv"
-            ),
+            download_dir=Path("downloads").resolve(),
+            matched_output_path=Path("downloads/matched_orders.csv"),
             non_gb_unmatched_output_path=Path(
-                os.getenv("NON_GB_UNMATCHED_OUTPUT_PATH")
-                or "downloads/non_gb_unmatched_orders_review.csv"
+                "downloads/non_gb_unmatched_orders_review.csv"
             ),
             full_orders_matched_output_path=Path(
-                os.getenv("FULL_ORDERS_MATCHED_OUTPUT_PATH")
-                or "downloads/stage2_full_orders_matched.csv"
+                "downloads/stage2_full_orders_matched.csv"
             ),
-            tracking_upload_output_path=Path(
-                os.getenv("TRACKING_UPLOAD_OUTPUT_PATH")
-                or "downloads/tracking_upload_template.txt"
-            ),
-            courier_conversions_path=Path(
-                os.getenv("COURIER_CONVERSIONS_PATH") or "courier_conversions.json"
-            ),
+            tracking_upload_output_path=Path("downloads/tracking_upload_template.txt"),
+            courier_conversions_path=Path("courier_conversions.json"),
             unmapped_courier_services_output_path=Path(
-                os.getenv("UNMAPPED_COURIER_SERVICES_OUTPUT_PATH")
-                or "downloads/unmapped_courier_services.csv"
+                "downloads/unmapped_courier_services.csv"
             ),
-            full_orders_match_key_column=(
-                os.getenv("FULL_ORDERS_MATCH_KEY_COLUMN") or "SiteOrderID"
-            ).strip(),
-            full_orders_report_key_column=(
-                os.getenv("FULL_ORDERS_REPORT_KEY_COLUMN") or "Channel Order ID"
-            ).strip(),
-            helm_report_ready_timeout_seconds=int(
-                os.getenv("HELM_REPORT_READY_TIMEOUT_SECONDS") or "2400"
-            ),
+            full_orders_match_key_column=("SiteOrderID").strip(),
+            full_orders_report_key_column=("Channel Order ID").strip(),
+            helm_report_ready_timeout_seconds=int("2400"),
             headless=_env_flag(
                 "AUTOMATION_HEADLESS", default=_env_flag("HEADLESS", default=False)
             ),
@@ -122,9 +106,7 @@ class Config:
             helm_manual_login_fallback=_env_flag(
                 "HELM_MANUAL_LOGIN_FALLBACK", default=True
             ),
-            helm_manual_login_timeout_seconds=int(
-                os.getenv("HELM_MANUAL_LOGIN_TIMEOUT_SECONDS") or "300"
-            ),
+            helm_manual_login_timeout_seconds=int("300"),
         )
 
 
