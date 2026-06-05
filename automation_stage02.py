@@ -94,7 +94,7 @@ class Config:
             unmapped_courier_services_output_path=Path(
                 "downloads/unmapped_courier_services.csv"
             ),
-            full_orders_match_key_column=("SiteOrderID").strip(),
+            full_orders_match_key_column=("Site Order ID").strip(),
             full_orders_report_key_column=("Channel Order ID").strip(),
             helm_report_ready_timeout_seconds=int("2400"),
             headless=_env_flag(
@@ -189,6 +189,7 @@ def prepare_tracking_upload_template_rows(
 
     return upload_rows, len(courier_conversions), len(unmapped_services)
 
+
 def click_orders_export_download_report_button(page: Page) -> None:
     clicked = page.evaluate("""() => {
                 const isVisible = el => {
@@ -235,9 +236,7 @@ def click_orders_export_download_report_button(page: Page) -> None:
                 return false;
             }""")
     if not clicked:
-        raise RuntimeError(
-            "Could not find the Orders Export Download Report button."
-        )
+        raise RuntimeError("Could not find the Orders Export Download Report button.")
     _wait_for_network_idle(page)
 
 
@@ -252,6 +251,7 @@ def download_orders_report(page: Page, config: Config) -> Path:
         config,
         requested_after_ms,
     )
+
 
 def request_orders_report_export(page: Page, config: Config) -> None:
     orders_export_path = "/imports_exports/orders"
@@ -279,13 +279,9 @@ def download_completed_orders_export_from_history(
     requested_after_ms: int,
 ) -> Path:
     user_hint = _helm_history_user_hint(config.email)
-    _log_step(
-        "Step 2.5: Check newly requested Orders export status in Export History"
-    )
+    _log_step("Step 2.5: Check newly requested Orders export status in Export History")
     deadline = time.monotonic() + config.helm_report_ready_timeout_seconds
     last_logged_status: str | None = None
-    not_found_refresh_count = 0
-    max_not_found_refreshes = 5
 
     while time.monotonic() < deadline:
         status = _latest_orders_export_status(page, user_hint, requested_after_ms)
@@ -304,17 +300,6 @@ def download_completed_orders_export_from_history(
                 f"(elapsed {elapsed_seconds}s)."
             )
             last_logged_status = normalized_status
-
-        if normalized_status.lower() == "not found":
-            not_found_refresh_count += 1
-            if not_found_refresh_count > max_not_found_refreshes:
-                raise RuntimeError(
-                    "No Orders export row for this user/request was found after "
-                    f"{max_not_found_refreshes} refresh checks. The script will not "
-                    "request another export automatically."
-                )
-        else:
-            not_found_refresh_count = 0
 
         if normalized_status.lower() in {"cancelled", "failed"}:
             raise RuntimeError(
@@ -348,7 +333,10 @@ def download_completed_orders_export_from_history(
         page.reload(wait_until="domcontentloaded")
         _wait_for_network_idle(page)
 
-    raise RuntimeError("Timed out waiting for the Helm Orders export.")
+    raise RuntimeError(
+        "Timed out waiting for the Helm Orders export. The script requested the "
+        "export once and did not create another request automatically."
+    )
 
 
 def _helm_history_user_hint(email: str) -> str:
@@ -370,17 +358,20 @@ def _latest_orders_export_status(
 
             function findRequestedHistoryRow(reportType, userHint, requestedAfterMs) {
                 const rows = Array.from(document.querySelectorAll('tbody tr, tr'));
-                return rows.find(el => {
+                const matchingRows = rows.filter(el => {
                     const cells = Array.from(el.querySelectorAll('td'));
                     if (cells.length < 8) return false;
                     const type = cells[1]?.innerText.trim() || '';
                     const user = (cells[2]?.innerText.trim() || '').toLowerCase();
+                    return new RegExp(`^${reportType}$`, 'i').test(type)
+                        && (!userHint || user.includes(userHint.toLowerCase()));
+                });
+                return matchingRows.find(el => {
+                    const cells = Array.from(el.querySelectorAll('td'));
                     const started = cells[5]?.innerText.trim() || '';
                     const created = cells[4]?.innerText.trim() || '';
-                    return new RegExp(`^${reportType}$`, 'i').test(type)
-                        && (!userHint || user.includes(userHint.toLowerCase()))
-                        && historyTimeIsAfter(started || created, requestedAfterMs);
-                });
+                    return historyTimeIsAfter(started || created, requestedAfterMs);
+                }) || matchingRows[0] || null;
             }
 
             function historyTimeIsAfter(rawValue, requestedAfterMs) {
@@ -456,17 +447,20 @@ def _click_latest_orders_export_download(
 
             function findRequestedHistoryRow(reportType, userHint, requestedAfterMs) {
                 const rows = Array.from(document.querySelectorAll('tbody tr, tr'));
-                return rows.find(el => {
+                const matchingRows = rows.filter(el => {
                     const cells = Array.from(el.querySelectorAll('td'));
                     if (cells.length < 8) return false;
                     const type = cells[1]?.innerText.trim() || '';
                     const user = (cells[2]?.innerText.trim() || '').toLowerCase();
+                    return new RegExp(`^${reportType}$`, 'i').test(type)
+                        && (!userHint || user.includes(userHint.toLowerCase()));
+                });
+                return matchingRows.find(el => {
+                    const cells = Array.from(el.querySelectorAll('td'));
                     const started = cells[5]?.innerText.trim() || '';
                     const created = cells[4]?.innerText.trim() || '';
-                    return new RegExp(`^${reportType}$`, 'i').test(type)
-                        && (!userHint || user.includes(userHint.toLowerCase()))
-                        && historyTimeIsAfter(started || created, requestedAfterMs);
-                });
+                    return historyTimeIsAfter(started || created, requestedAfterMs);
+                }) || matchingRows[0] || null;
             }
 
             function historyTimeIsAfter(rawValue, requestedAfterMs) {
@@ -575,22 +569,30 @@ def match_stage1_unmatched_rows_to_full_orders(
     unmatched_key_column = _resolve_column(
         unmatched_rows[0],
         config.full_orders_match_key_column,
-        ["SiteOrderID", "Order ID", "Channel Order ID"],
+        ["Site Order ID", "SiteOrderID", "Order ID", "Channel Order ID"],
         "Stage 1 unmatched",
     )
     full_orders_key_column = _resolve_column(
         full_order_rows[0] if full_order_rows else {},
         config.full_orders_report_key_column,
-        ["Channel Order ID", "Order Channel Alt. ID", "SiteOrderID", "Order ID"],
-        "Full Orders Report",
+        [
+            "Channel Order ID",
+            "Channel Alt ID",
+            "Order Channel Alt. ID",
+            "SiteOrderID",
+            "Order ID",
+        ],
+        "Orders export",
     )
     _log_step(f"Step 6: Selected '{unmatched_key_column}' as Stage 1 lookup key")
 
     full_order_output_columns = [
         "Sales Channel",
         "Channel Order ID",
+        "Channel Alt ID",
         "Order Channel Alt. ID",
         "Order Date",
+        "Order Status",
         "Status",
         "Shipping Name Company",
         "Shipping Name",
@@ -607,7 +609,7 @@ def match_stage1_unmatched_rows_to_full_orders(
     full_orders_lookup = _build_full_orders_lookup(
         full_order_rows,
         full_orders_key_column,
-        alternate_key_columns=["Order Channel Alt. ID"],
+        alternate_key_columns=["Channel Alt ID", "Order Channel Alt. ID", "Order ID"],
     )
     _log_step("Step 8: Built Full Orders lookup from downloaded report")
 
@@ -622,7 +624,10 @@ def match_stage1_unmatched_rows_to_full_orders(
         if full_order_row:
             matched_count += 1
             output_row["Matched In Full Orders Report"] = "Yes"
-            full_orders_status = str(full_order_row.get("Status", "") or "").strip()
+            full_orders_status = _first_row_value(
+                full_order_row,
+                ["Order Status", "Status"],
+            )
             output_row["Stage 2 Full Orders Status"] = full_orders_status
             for column in available_output_columns:
                 output_row[f"Full Orders {column}"] = full_order_row.get(column, "")
@@ -947,7 +952,7 @@ def merge_stage2_rows_into_stage1_matched_rows(
     stage1_key_column = _resolve_column(
         stage1_rows[0],
         stage2_key_column,
-        ["SiteOrderID", "Order ID", "Channel Order ID"],
+        ["Site Order ID", "SiteOrderID", "Order ID", "Channel Order ID"],
         "Stage 1 matched",
     )
     correction_lookup = {
@@ -1014,7 +1019,7 @@ def _tracking_upload_template_row(
         unmapped_services,
     )
     return {
-        "Invoice No": str(row.get("SiteOrderID", "") or "").strip(),
+        "Invoice No": _first_row_value(row, ["SiteOrderID", "Site Order ID"]),
         "Tracking Number": str(row.get("DC Track", "") or "").strip(),
         "Date Shipped": str(row.get("DC Date", "") or "").strip(),
         "Shipping Carrier Source": shipping_method,
@@ -1022,6 +1027,14 @@ def _tracking_upload_template_row(
         "Shipping Class Code": shipping_class,
         "Prevent Site Processing": "",
     }
+
+
+def _first_row_value(row: dict[str, str], columns: list[str]) -> str:
+    for column in columns:
+        value = str(row.get(column, "") or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _count_template_values(rows: list[dict[str, str]], column: str) -> int:
