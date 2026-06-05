@@ -191,14 +191,6 @@ def prepare_tracking_upload_template_rows(
 
     return upload_rows, len(courier_conversions), len(unmapped_services)
 
-
-def open_orders_reports_section(page: Page) -> None:
-    page.locator("a[data-section='orders'], a[href='#orders']").first.click(
-        timeout=10000
-    )
-    _wait_for_network_idle(page)
-
-
 def click_orders_export_download_report_button(page: Page) -> None:
     clicked = page.evaluate("""() => {
                 const isVisible = el => {
@@ -251,11 +243,11 @@ def click_orders_export_download_report_button(page: Page) -> None:
     _wait_for_network_idle(page)
 
 
-def download_full_orders_report(page: Page, config: Config) -> Path:
+def download_orders_report(page: Page, config: Config) -> Path:
     config.download_dir.mkdir(parents=True, exist_ok=True)
 
     requested_after_ms = int(time.time() * 1000)
-    request_full_orders_report_export(page, config)
+    request_orders_report_export(page, config)
 
     return download_completed_full_orders_report_from_history(
         page,
@@ -263,8 +255,8 @@ def download_full_orders_report(page: Page, config: Config) -> Path:
         requested_after_ms,
     )
 
-
-def request_full_orders_report_export(page: Page, config: Config) -> None:
+# need to work on this
+def request_orders_report_export(page: Page, config: Config) -> None:
     reports_path = "/reports-new/download"
     if reports_path not in page.url:
         page.goto(
@@ -272,7 +264,6 @@ def request_full_orders_report_export(page: Page, config: Config) -> None:
             wait_until="domcontentloaded",
         )
         _wait_for_network_idle(page)
-        open_orders_reports_section(page)
 
     _log_step("Step 2.3: Click Full Orders Report download/request button")
     if not _click_full_orders_report_request(page):
@@ -393,7 +384,7 @@ def download_completed_full_orders_report_from_history(
                     "export."
                 )
                 requested_after_ms = int(time.time() * 1000)
-                request_full_orders_report_export(page, config)
+                request_orders_report_export(page, config)
                 not_found_refresh_count = 0
                 last_logged_status = None
                 continue
@@ -413,7 +404,7 @@ def download_completed_full_orders_report_from_history(
                 f"(attempt {retry_count}/{max_retries})."
             )
             requested_after_ms = int(time.time() * 1000)
-            request_full_orders_report_export(page, config)
+            request_orders_report_export(page, config)
             last_logged_status = None
             continue
 
@@ -1394,10 +1385,7 @@ def run_stage2_steps(page: Page, config: Config) -> None:
     open_reports_page(page, config)
     _log_step("Step 2.3: Open Reports page")
 
-    open_orders_reports_section(page)
-    _log_step("Step 2.4: Open Orders reports section")
-
-    downloaded_path = download_full_orders_report(page, config)
+    downloaded_path = download_orders_report(page, config)
     _log_step(f"Step 3: Download Full Orders Report to {downloaded_path}")
 
     matched_path = match_stage1_unmatched_rows_to_full_orders(downloaded_path, config)
