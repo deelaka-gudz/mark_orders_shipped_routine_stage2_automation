@@ -12,7 +12,6 @@ from playwright.sync_api import sync_playwright
 
 from automation_stage01 import (
     LoginFlow,
-    _download_helm_export_url,
     _log_info,
     _log_step,
     _normalized_key,
@@ -21,7 +20,6 @@ from automation_stage01 import (
     _save_download,
     _wait_for_network_idle,
     _write_dict_rows,
-    open_reports_page,
 )
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
@@ -249,28 +247,23 @@ def download_orders_report(page: Page, config: Config) -> Path:
     requested_after_ms = int(time.time() * 1000)
     request_orders_report_export(page, config)
 
-    return download_completed_full_orders_report_from_history(
+    return download_completed_orders_export_from_history(
         page,
         config,
         requested_after_ms,
     )
 
-# need to work on this
 def request_orders_report_export(page: Page, config: Config) -> None:
-    reports_path = "/reports-new/download"
-    if reports_path not in page.url:
+    orders_export_path = "/imports_exports/orders"
+    if orders_export_path not in page.url:
         page.goto(
-            f"{_origin_url(config.helm_url)}{reports_path}",
+            f"{_origin_url(config.helm_url)}{orders_export_path}",
             wait_until="domcontentloaded",
         )
         _wait_for_network_idle(page)
 
-    _log_step("Step 2.3: Click Full Orders Report download/request button")
-    if not _click_full_orders_report_request(page):
-        raise RuntimeError(
-            "Could not find the Full Orders Report export request button."
-        )
-
+    _log_step("Step 2.3: Click Orders export download/request button")
+    click_orders_export_download_report_button(page)
     _wait_for_network_idle(page)
     _log_step("Step 2.4: Open Helm Export History")
     page.goto(
@@ -280,84 +273,22 @@ def request_orders_report_export(page: Page, config: Config) -> None:
     _wait_for_network_idle(page)
 
 
-def _click_full_orders_report_request(page: Page) -> bool:
-    return bool(page.evaluate("""() => {
-                const isVisible = el => {
-                    const style = window.getComputedStyle(el);
-                    const rect = el.getBoundingClientRect();
-                    return style.visibility !== 'hidden'
-                        && style.display !== 'none'
-                        && rect.width > 0
-                        && rect.height > 0;
-                };
-
-                const exactButton = document.querySelector(
-                    "form[data-report-name='dc_full_orders_report'] " +
-                    "input[name='create_report'], " +
-                    "form[data-report-name='dc_full_orders_report'] " +
-                    "button[type='submit'], " +
-                    "input[export-service-button='3']"
-                );
-                if (exactButton && isVisible(exactButton)) {
-                    exactButton.scrollIntoView({block: 'center', inline: 'center'});
-                    exactButton.click();
-                    return true;
-                }
-
-                const candidates = Array.from(
-                    document.querySelectorAll(
-                        "input[name='create_report'], input[type='submit'], button, a"
-                    )
-                ).filter(isVisible);
-
-                for (const candidate of candidates) {
-                    const form = candidate.closest('form');
-                    const panel = candidate.closest('.panel');
-                    const haystack = [
-                        candidate.innerText,
-                        candidate.textContent,
-                        candidate.value,
-                        candidate.getAttribute('title'),
-                        candidate.getAttribute('aria-label'),
-                        candidate.getAttribute('name'),
-                        form?.getAttribute('data-report-name'),
-                        form?.getAttribute('action'),
-                        panel?.innerText,
-                        panel?.getAttribute('export-service-id')
-                    ].filter(Boolean).join(' ');
-
-                    const isFullOrders = /full\\s+orders\\s+report|dc_full_orders_report|full_order_export/i.test(haystack);
-                    const canRequest = /create|request|export|download|report/i.test(haystack);
-
-                    if (isFullOrders && canRequest) {
-                        candidate.scrollIntoView({block: 'center', inline: 'center'});
-                        candidate.click();
-                        return true;
-                    }
-                }
-
-                return false;
-            }"""))
-
-
-def download_completed_full_orders_report_from_history(
+def download_completed_orders_export_from_history(
     page: Page,
     config: Config,
     requested_after_ms: int,
 ) -> Path:
     user_hint = _helm_history_user_hint(config.email)
     _log_step(
-        "Step 2.5: Check newly requested Full Orders Report status in Export History"
+        "Step 2.5: Check newly requested Orders export status in Export History"
     )
     deadline = time.monotonic() + config.helm_report_ready_timeout_seconds
     last_logged_status: str | None = None
-    retry_count = 0
-    max_retries = 3
     not_found_refresh_count = 0
     max_not_found_refreshes = 5
 
     while time.monotonic() < deadline:
-        status = _latest_full_orders_report_status(page, user_hint, requested_after_ms)
+        status = _latest_orders_export_status(page, user_hint, requested_after_ms)
         normalized_status = (status or "not found").strip()
         elapsed_seconds = int(
             config.helm_report_ready_timeout_seconds
@@ -368,7 +299,7 @@ def download_completed_full_orders_report_from_history(
             normalized_status != last_logged_status or config.debug
         ):
             print(
-                "[WAIT] Step 2.6: Full Orders Report status is "
+                "[WAIT] Step 2.6: Orders export status is "
                 f"'{normalized_status}'. Waiting up to {remaining_seconds}s more "
                 f"(elapsed {elapsed_seconds}s)."
             )
@@ -377,70 +308,47 @@ def download_completed_full_orders_report_from_history(
         if normalized_status.lower() == "not found":
             not_found_refresh_count += 1
             if not_found_refresh_count > max_not_found_refreshes:
-                print(
-                    "[WARN] Step 2.6: No Full Orders Report row for this user/request "
-                    "was found after "
-                    f"{max_not_found_refreshes} refresh checks. Requesting a fresh "
-                    "export."
+                raise RuntimeError(
+                    "No Orders export row for this user/request was found after "
+                    f"{max_not_found_refreshes} refresh checks. The script will not "
+                    "request another export automatically."
                 )
-                requested_after_ms = int(time.time() * 1000)
-                request_orders_report_export(page, config)
-                not_found_refresh_count = 0
-                last_logged_status = None
-                continue
         else:
             not_found_refresh_count = 0
 
         if normalized_status.lower() in {"cancelled", "failed"}:
-            if retry_count >= max_retries:
-                raise RuntimeError(
-                    "Requested Full Orders Report status is "
-                    f"'{normalized_status}' after {retry_count} retry attempts."
-                )
-            retry_count += 1
-            print(
-                "[WARN] Step 2.6: Full Orders Report export ended as "
-                f"'{normalized_status}'. Requesting a fresh export "
-                f"(attempt {retry_count}/{max_retries})."
+            raise RuntimeError(
+                "Requested Orders export status is "
+                f"'{normalized_status}'. The script will not request another export "
+                "automatically."
             )
-            requested_after_ms = int(time.time() * 1000)
-            request_orders_report_export(page, config)
-            last_logged_status = None
-            continue
 
         if status and status.lower() == "completed":
-            _log_step("Step 2.7: Full Orders Report is completed and ready to download")
-            download_url = _latest_full_orders_report_download_url(
-                page,
-                user_hint,
-                requested_after_ms,
-            )
-            if download_url:
-                downloaded_path = _download_helm_export_url(
-                    page, download_url, config.download_dir
-                )
-                _log_step("Step 2.8: Downloaded Full Orders Report from History URL")
-                return downloaded_path
-
+            _log_step("Step 2.7: Orders export is completed and ready to download")
             with page.expect_download(timeout=60000) as download_info:
-                if not _click_latest_full_orders_report_download(
+                if not _click_latest_orders_export_download(
                     page,
                     user_hint,
                     requested_after_ms,
-                ):
+                    ):
                     raise RuntimeError(
-                        "Requested Full Orders Report is completed, but no download URL "
-                        "or download action button/link was found."
+                        "Requested Orders export is completed, but no download "
+                        "action button/link was found."
                     )
             downloaded_path = _save_download(download_info.value, config.download_dir)
-            _log_step("Step 2.8: Downloaded Full Orders Report using History button")
+            _log_step("Step 2.8: Downloaded Orders export using History button")
+            if not downloaded_path.exists() or downloaded_path.stat().st_size == 0:
+                raise RuntimeError(
+                    "Orders export download finished, but the saved file is missing "
+                    f"or empty: {downloaded_path}"
+                )
             return downloaded_path
 
         page.wait_for_timeout(10000)
         page.reload(wait_until="domcontentloaded")
         _wait_for_network_idle(page)
 
-    raise RuntimeError("Timed out waiting for the Helm Full Orders Report export.")
+    raise RuntimeError("Timed out waiting for the Helm Orders export.")
 
 
 def _helm_history_user_hint(email: str) -> str:
@@ -448,14 +356,14 @@ def _helm_history_user_hint(email: str) -> str:
     return re.split(r"[._+\-]", local_part, maxsplit=1)[0] or local_part
 
 
-def _latest_full_orders_report_status(
+def _latest_orders_export_status(
     page: Page,
     user_hint: str,
     requested_after_ms: int,
 ) -> str | None:
     return page.evaluate(
         """({userHint, requestedAfterMs}) => {
-            const row = findRequestedHistoryRow('Full Orders Report', userHint, requestedAfterMs);
+            const row = findRequestedHistoryRow('Orders', userHint, requestedAfterMs);
             if (!row) return null;
             const cells = Array.from(row.querySelectorAll('td'));
             return cells[3]?.innerText.trim() || null;
@@ -501,69 +409,7 @@ def _latest_full_orders_report_status(
     )
 
 
-def _latest_full_orders_report_download_url(
-    page: Page,
-    user_hint: str,
-    requested_after_ms: int,
-) -> str | None:
-    return page.evaluate(
-        """({userHint, requestedAfterMs}) => {
-            const row = findRequestedHistoryRow('Full Orders Report', userHint, requestedAfterMs);
-            if (!row) return null;
-            const cells = Array.from(row.querySelectorAll('td'));
-            if (!/^Completed$/i.test(cells[3]?.innerText.trim() || '')) return null;
-
-            const link = row.querySelector(
-                "td:last-child a[download][href*='dc_full_orders_report'], " +
-                "td:last-child a[href*='dc_full_orders_report'], " +
-                "td:last-child a[download][href*='/full-orders'], " +
-                "td:last-child a[download][href*='/orders-'], " +
-                "td:last-child a[download]"
-            );
-            return link?.href || null;
-
-            function findRequestedHistoryRow(reportType, userHint, requestedAfterMs) {
-                const rows = Array.from(document.querySelectorAll('tbody tr, tr'));
-                return rows.find(el => {
-                    const cells = Array.from(el.querySelectorAll('td'));
-                    if (cells.length < 8) return false;
-                    const type = cells[1]?.innerText.trim() || '';
-                    const user = (cells[2]?.innerText.trim() || '').toLowerCase();
-                    const started = cells[5]?.innerText.trim() || '';
-                    const created = cells[4]?.innerText.trim() || '';
-                    return new RegExp(`^${reportType}$`, 'i').test(type)
-                        && (!userHint || user.includes(userHint.toLowerCase()))
-                        && historyTimeIsAfter(started || created, requestedAfterMs);
-                });
-            }
-
-            function historyTimeIsAfter(rawValue, requestedAfterMs) {
-                const parsed = parseHistoryTime(rawValue);
-                return parsed !== null && parsed >= requestedAfterMs - 120000;
-            }
-
-            function parseHistoryTime(rawValue) {
-                const text = (rawValue || '').replace(/\\s+/g, ' ').trim();
-                if (!text) return null;
-                const nativeParsed = Date.parse(text);
-                if (!Number.isNaN(nativeParsed)) return nativeParsed;
-                const match = text.match(/^(\\d{1,2})\\s+([A-Za-z]{3,})\\s+(\\d{4})\\s+(\\d{1,2}):(\\d{2})\\s*(AM|PM)?$/i);
-                if (!match) return null;
-                const months = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
-                const month = months[match[2].slice(0, 3).toLowerCase()];
-                if (month === undefined) return null;
-                let hour = Number(match[4]);
-                const ampm = (match[6] || '').toUpperCase();
-                if (ampm === 'PM' && hour < 12) hour += 12;
-                if (ampm === 'AM' && hour === 12) hour = 0;
-                return new Date(Number(match[3]), month, Number(match[1]), hour, Number(match[5])).getTime();
-            }
-        }""",
-        {"userHint": user_hint, "requestedAfterMs": requested_after_ms},
-    )
-
-
-def _click_latest_full_orders_report_download(
+def _click_latest_orders_export_download(
     page: Page,
     user_hint: str,
     requested_after_ms: int,
@@ -571,19 +417,37 @@ def _click_latest_full_orders_report_download(
     return bool(
         page.evaluate(
             """({userHint, requestedAfterMs}) => {
-            const row = findRequestedHistoryRow('Full Orders Report', userHint, requestedAfterMs);
+            const row = findRequestedHistoryRow('Orders', userHint, requestedAfterMs);
             if (!row) return false;
 
             const cells = Array.from(row.querySelectorAll('td'));
             if (!/^Completed$/i.test(cells[3]?.innerText.trim() || '')) return false;
 
-            const action = row.querySelector(
-                "td:last-child a[download][href*='dc_full_orders_report'], " +
-                "td:last-child a[href*='dc_full_orders_report'], " +
-                "td:last-child a[download][href*='/full-orders'], " +
-                "td:last-child a[download][href*='/orders-'], " +
-                "td:last-child a[download]"
-            );
+            const actionsCell = cells[cells.length - 1];
+            const action = Array.from(
+                actionsCell.querySelectorAll("a, button")
+            ).find(el => {
+                const haystack = [
+                    el.innerText,
+                    el.textContent,
+                    el.getAttribute('title'),
+                    el.getAttribute('aria-label'),
+                    el.getAttribute('download'),
+                    el.getAttribute('href'),
+                    el.className,
+                    Array.from(el.querySelectorAll('i, svg, span'))
+                        .map(child => [
+                            child.getAttribute('class'),
+                            child.getAttribute('title'),
+                            child.getAttribute('aria-label'),
+                            child.getAttribute('data-icon')
+                        ].filter(Boolean).join(' '))
+                        .join(' ')
+                ].filter(Boolean).join(' ');
+                return /download|dc_orders_export|orders-|fa-download|download-cloud/i
+                    .test(haystack)
+                    && !/view|eye|preview/i.test(haystack);
+            });
 
             if (!action) return false;
             action.scrollIntoView({block: 'center', inline: 'center'});
@@ -1379,14 +1243,8 @@ def run_stage2_steps(page: Page, config: Config) -> None:
     _wait_for_network_idle(page)
     _log_step("Step 2.1: Open Helm Imports/Exports Orders page")
 
-    click_orders_export_download_report_button(page)
-    _log_step("Step 2.2: Click Orders Export Download Report button")
-
-    open_reports_page(page, config)
-    _log_step("Step 2.3: Open Reports page")
-
     downloaded_path = download_orders_report(page, config)
-    _log_step(f"Step 3: Download Full Orders Report to {downloaded_path}")
+    _log_step(f"Step 3: Download Orders export to {downloaded_path}")
 
     matched_path = match_stage1_unmatched_rows_to_full_orders(downloaded_path, config)
     if matched_path:
