@@ -515,10 +515,16 @@ def begin_rithum_browser_order_download(page: Page, config: Config) -> Path:
     _log_step("Step 1.8: Opened Fulfill section")
     click_rithum_orders(page)
     _log_step("Step 1.9: Opened Orders page")
-    click_rithum_select_filter_dropdown(page)
-    _log_step("Step 1.10: Opened order filter dropdown")
-    search_and_select_rithum_order_filter(page, config.rithum_order_filter_name)
-    _log_step("Step 1.11: Selected saved order filter")
+    if is_rithum_order_filter_selected(page, config.rithum_order_filter_name):
+        _log_step("Step 1.10: Saved order filter was already selected")
+    else:
+        click_rithum_select_filter_dropdown(page)
+        _log_step("Step 1.10: Opened order filter dropdown")
+        if is_rithum_order_filter_selected(page, config.rithum_order_filter_name):
+            _log_step("Step 1.11: Saved order filter was already selected")
+        else:
+            search_and_select_rithum_order_filter(page, config.rithum_order_filter_name)
+            _log_step("Step 1.11: Selected saved order filter")
     click_rithum_export_dropdown(page)
     _log_step("Step 1.12: Opened export layout menu")
     return download_rithum_basic_layout_export(
@@ -624,6 +630,35 @@ def click_rithum_select_filter_dropdown(page: Page) -> None:
         timeout_ms=30000,
     )
     page.wait_for_timeout(500)
+
+
+def is_rithum_order_filter_selected(page: Page, filter_name: str) -> bool:
+    normalized_filter_name = _normalize_ui_text(filter_name)
+    try:
+        selected_text = page.evaluate(
+            """() => {
+                const selectors = [
+                    "[data-turboinlineselect-selected-items]",
+                    ".tb-inlineselect-selected-items",
+                    ".tb-filter-advasicfiltereditor-filter-picker",
+                    "span[data-turbofilter-advasicfiltereditor-filter-picker]",
+                    "#filter"
+                ];
+                return selectors
+                    .map(selector => Array.from(document.querySelectorAll(selector))
+                        .map(el => el.innerText || el.textContent || "")
+                        .join(" "))
+                    .join(" ");
+            }"""
+        )
+    except PlaywrightError:
+        return False
+
+    return normalized_filter_name in _normalize_ui_text(selected_text)
+
+
+def _normalize_ui_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().lower()
 
 
 def search_and_select_rithum_order_filter(page: Page, filter_name: str) -> None:
