@@ -289,7 +289,9 @@ class Config:
         dotenv_values_map = dotenv_values(dotenv_path, encoding="utf-8-sig")
 
         return Config(
-            helm_url=("https://mybeautyandcareltd1.myhelm.app/login.php?type=standard").strip(),
+            helm_url=(
+                "https://mybeautyandcareltd1.myhelm.app/login.php?type=standard"
+            ).strip(),
             email=_require_env("HELM_EMAIL").strip(),
             password=_require_env("HELM_PASSWORD"),
             download_dir=Path("downloads").resolve(),
@@ -635,8 +637,7 @@ def click_rithum_select_filter_dropdown(page: Page) -> None:
 def is_rithum_order_filter_selected(page: Page, filter_name: str) -> bool:
     normalized_filter_name = _normalize_ui_text(filter_name)
     try:
-        selected_text = page.evaluate(
-            """() => {
+        selected_text = page.evaluate("""() => {
                 const selectors = [
                     "[data-turboinlineselect-selected-items]",
                     ".tb-inlineselect-selected-items",
@@ -649,8 +650,7 @@ def is_rithum_order_filter_selected(page: Page, filter_name: str) -> bool:
                         .map(el => el.innerText || el.textContent || "")
                         .join(" "))
                     .join(" ");
-            }"""
-        )
+            }""")
     except PlaywrightError:
         return False
 
@@ -1027,6 +1027,18 @@ def match_order_file_to_dc_shipping_report(config: Config) -> Path | None:
     dc_rows = _read_csv(config.dc_shipping_report_path)
     order_key_column = config.order_match_key_column
     dc_key_column = config.dc_match_key_column
+
+    if not order_rows:
+        raise RuntimeError(
+            "Rithum order export has 0 order rows. The downloaded "
+            f"Basic Layout file only contains headers: {config.rithum_orders_output_path}. "
+            "Check the selected Rithum saved filter/date range, then rerun Stage 1."
+        )
+    if not dc_rows:
+        raise RuntimeError(
+            "DC shipping report has 0 rows. Check the Helm Shipping Report export, "
+            f"then rerun Stage 1: {config.dc_shipping_report_path}."
+        )
 
     if order_rows and order_key_column not in order_rows[0]:
         raise RuntimeError(
