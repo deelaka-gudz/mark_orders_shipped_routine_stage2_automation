@@ -315,7 +315,7 @@ def download_completed_orders_export_from_history(
                     page,
                     user_hint,
                     requested_after_ms,
-                    ):
+                ):
                     raise RuntimeError(
                         "Requested Orders export is completed, but no download "
                         "action button/link was found."
@@ -997,14 +997,36 @@ def build_tracking_upload_template_rows(
     courier_conversions: dict[str, tuple[str, str]],
     unmapped_services: set[str],
 ) -> list[dict[str, str]]:
-    return [
-        _tracking_upload_template_row(
-            row,
+    upload_rows = []
+    evri_tracking_seed = ""
+    generated_international_count = 0
+
+    for source_row in rows:
+        upload_row = _tracking_upload_template_row(
+            source_row,
             courier_conversions,
             unmapped_services,
         )
-        for row in rows
-    ]
+
+        if _is_international_row(source_row):
+            upload_row["Shipping Carrier Code"] = "Evri"
+            upload_row["Shipping Class Code"] = "EVRI 24"
+            if evri_tracking_seed:
+                generated_international_count += 1
+                upload_row["Tracking Number"] = (
+                    _tracking_number_with_incremented_middle_block(
+                        evri_tracking_seed,
+                        generated_international_count,
+                    )
+                )
+
+        upload_rows.append(upload_row)
+
+        if _is_evri_24_upload_row(upload_row):
+            evri_tracking_seed = upload_row["Tracking Number"]
+            generated_international_count = 0
+
+    return upload_rows
 
 
 def _tracking_upload_template_row(
@@ -1021,7 +1043,7 @@ def _tracking_upload_template_row(
     return {
         "Invoice No": _first_row_value(row, ["SiteOrderID", "Site Order ID"]),
         "Tracking Number": str(row.get("DC Track", "") or "").strip(),
-        "Date Shipped": str(row.get("DC Date", "") or "").strip(),
+        "Date Shipped": _date_shipped_value(row),
         "Shipping Carrier Source": shipping_method,
         "Shipping Carrier Code": shipping_carrier,
         "Shipping Class Code": shipping_class,
@@ -1035,6 +1057,31 @@ def _first_row_value(row: dict[str, str], columns: list[str]) -> str:
         if value:
             return value
     return ""
+
+
+def _date_shipped_value(row: dict[str, str]) -> str:
+    estimated_ship_date = str(row.get("Estimated Ship Date", "") or "").strip()
+    dc_date_despatched = str(row.get("DC Date", "") or "").strip()
+
+    estimated_datetime = _parse_template_datetime(estimated_ship_date)
+    dc_datetime = _parse_template_datetime(dc_date_despatched)
+
+    if estimated_datetime and dc_datetime and estimated_datetime > dc_datetime:
+        return dc_date_despatched
+    return estimated_ship_date
+
+
+def _parse_template_datetime(value: str):
+    normalized = value.strip()
+    if not normalized or normalized == "0000-00-00 00:00:00":
+        return None
+
+    for date_format in ("%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return time.strptime(normalized, date_format)
+        except ValueError:
+            continue
+    return None
 
 
 def _count_template_values(rows: list[dict[str, str]], column: str) -> int:
@@ -1091,6 +1138,22 @@ def _shipping_conversion_values(
 
     unmapped_services.add(normalized)
     return "#N/A", "#N/A"
+
+
+def _is_international_row(row: dict[str, str]) -> bool:
+    status = str(row.get("Stage 2 Full Orders Status", "") or "").strip().lower()
+    return status == "international"
+
+
+def _is_evri_24_upload_row(row: dict[str, str]) -> bool:
+    tracking_number = str(row.get("Tracking Number", "") or "").strip()
+    carrier_code = str(row.get("Shipping Carrier Code", "") or "").strip().upper()
+    class_code = str(row.get("Shipping Class Code", "") or "").strip().upper()
+    return (
+        _is_usable_tracking_seed(tracking_number)
+        and carrier_code == "EVRI"
+        and class_code == "EVRI 24"
+    )
 
 
 def _resolve_column(
@@ -1245,6 +1308,18 @@ def _tracking_number_with_incremented_suffix(seed: str, offset: int) -> str:
     for index, replacement_digit in zip(suffix_positions, f"{next_suffix:03d}"):
         characters[index] = replacement_digit
     return "".join(characters)
+
+
+def _tracking_number_with_incremented_middle_block(seed: str, offset: int) -> str:
+    match = re.match(r"^(.*[A-Za-z])(\d{3})(\d+)$", seed.strip())
+    if not match:
+        raise RuntimeError(
+            f"Cannot generate international tracking number from seed: {seed}"
+        )
+
+    prefix, counter, suffix = match.groups()
+    next_counter = (int(counter) + offset) % 1000
+    return f"{prefix}{next_counter:03d}{suffix}"
 
 
 def run_stage2_steps(page: Page, config: Config) -> None:
