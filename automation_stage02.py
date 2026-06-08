@@ -510,6 +510,32 @@ def match_stage1_unmatched_rows_to_full_orders(
             [],
             config.full_orders_match_key_column,
         )
+        full_order_rows = _read_csv(full_orders_path)
+        full_orders_key_column = _resolve_column(
+            full_order_rows[0] if full_order_rows else {},
+            config.full_orders_report_key_column,
+            [
+                "Channel Order ID",
+                "Channel Alt ID",
+                "Order Channel Alt. ID",
+                "SiteOrderID",
+                "Order ID",
+            ],
+            "Orders export",
+        )
+        full_orders_lookup = _build_full_orders_lookup(
+            full_order_rows,
+            full_orders_key_column,
+            alternate_key_columns=[
+                "Channel Alt ID",
+                "Order Channel Alt. ID",
+                "Order ID",
+            ],
+        )
+        enrich_upload_source_rows_with_full_orders_status(
+            upload_source_rows,
+            full_orders_lookup,
+        )
         (
             upload_template_rows,
             _courier_conversion_count,
@@ -545,6 +571,19 @@ def match_stage1_unmatched_rows_to_full_orders(
             config.matched_output_path,
             [],
             config.full_orders_match_key_column,
+        )
+        full_orders_lookup = _build_full_orders_lookup(
+            full_order_rows,
+            full_orders_key_column,
+            alternate_key_columns=[
+                "Channel Alt ID",
+                "Order Channel Alt. ID",
+                "Order ID",
+            ],
+        )
+        enrich_upload_source_rows_with_full_orders_status(
+            upload_source_rows,
+            full_orders_lookup,
         )
         (
             upload_template_rows,
@@ -728,6 +767,10 @@ def match_stage1_unmatched_rows_to_full_orders(
         config.matched_output_path,
         matched_rows,
         unmatched_key_column,
+    )
+    enrich_upload_source_rows_with_full_orders_status(
+        upload_source_rows,
+        full_orders_lookup,
     )
     _log_step(
         "Step 52.1: Merged Stage 2 corrections back into full Stage 1 matched "
@@ -974,10 +1017,47 @@ def merge_stage2_rows_into_stage1_matched_rows(
     return merged_rows
 
 
+def enrich_upload_source_rows_with_full_orders_status(
+    upload_source_rows: list[dict[str, str]],
+    full_orders_lookup: dict[str, dict[str, str]],
+) -> None:
+    for row in upload_source_rows:
+        full_order_row = _lookup_full_order_for_upload_row(row, full_orders_lookup)
+        if not full_order_row:
+            continue
+
+        status = _first_row_value(full_order_row, ["Order Status", "Status"])
+        if status:
+            row["Full Orders Order Status"] = status
+
+
+def _lookup_full_order_for_upload_row(
+    row: dict[str, str],
+    full_orders_lookup: dict[str, dict[str, str]],
+) -> dict[str, str] | None:
+    for column in (
+        "Site Order ID",
+        "SiteOrderID",
+        "Order ID",
+        "Channel Order ID",
+        "Full Orders Channel Order ID",
+    ):
+        full_order_row = full_orders_lookup.get(_normalized_key(row.get(column)))
+        if full_order_row:
+            return full_order_row
+    return None
+
+
 def write_tracking_upload_template_file(
     rows: list[dict[str, str]],
     output_path: Path,
 ) -> None:
+    if not rows:
+        raise RuntimeError(
+            "Refusing to write tracking upload template with 0 rows. "
+            "Check that matched_orders.csv contains the Stage 1 matched output."
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         column
@@ -1008,7 +1088,14 @@ def build_tracking_upload_template_rows(
             unmapped_services,
         )
 
-        if _is_international_row(source_row):
+        if _is_cancelled_row(source_row):
+            upload_row["Tracking Number"] = "CANCELLED"
+            upload_row["Shipping Carrier Code"] = "CANCELLED"
+            upload_row["Shipping Class Code"] = "CANCELLED"
+        elif _is_international_row(source_row) or _needs_generated_evri_tracking_row(
+            source_row,
+            upload_row,
+        ):
             upload_row["Shipping Carrier Code"] = "Evri"
             upload_row["Shipping Class Code"] = "EVRI 24"
             if evri_tracking_seed:
@@ -1141,8 +1228,41 @@ def _shipping_conversion_values(
 
 
 def _is_international_row(row: dict[str, str]) -> bool:
-    status = str(row.get("Stage 2 Full Orders Status", "") or "").strip().lower()
-    return status == "international"
+    return _row_status(row) == "international"
+
+
+def _is_cancelled_row(row: dict[str, str]) -> bool:
+    return _row_status(row) == "cancelled"
+
+
+def _needs_generated_evri_tracking_row(
+    source_row: dict[str, str],
+    upload_row: dict[str, str],
+) -> bool:
+    if not _is_placeholder_value(str(upload_row.get("Tracking Number", "") or "")):
+        return False
+
+    return _row_status(source_row) in {
+        "pregen failure",
+        "picked",
+        "picking",
+        "despatched",
+        "despatch ready",
+    }
+
+
+def _row_status(row: dict[str, str]) -> str:
+    for column in (
+        "Stage 2 Full Orders Status",
+        "Full Orders Order Status",
+        "Full Orders Status",
+        "Order Status",
+        "Status",
+    ):
+        status = str(row.get(column, "") or "").strip().lower()
+        if status:
+            return status
+    return ""
 
 
 def _is_evri_24_upload_row(row: dict[str, str]) -> bool:
@@ -1311,15 +1431,18 @@ def _tracking_number_with_incremented_suffix(seed: str, offset: int) -> str:
 
 
 def _tracking_number_with_incremented_middle_block(seed: str, offset: int) -> str:
-    match = re.match(r"^(.*[A-Za-z])(\d{3})(\d+)$", seed.strip())
-    if not match:
+    characters = list(seed.strip())
+    increment_positions = [-6, -1]
+    if len(characters) < 6 or any(
+        not characters[position].isdigit() for position in increment_positions
+    ):
         raise RuntimeError(
             f"Cannot generate international tracking number from seed: {seed}"
         )
 
-    prefix, counter, suffix = match.groups()
-    next_counter = (int(counter) + offset) % 1000
-    return f"{prefix}{next_counter:03d}{suffix}"
+    for position in increment_positions:
+        characters[position] = str((int(characters[position]) + offset) % 10)
+    return "".join(characters)
 
 
 def run_stage2_steps(page: Page, config: Config) -> None:
