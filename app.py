@@ -181,6 +181,7 @@ def render_downloads() -> None:
             file_name=FINAL_OUTPUT_PATH.name,
             mime="text/plain",
         )
+        
     else:
         st.info("Final output is not available yet. Click 'Click to Start' first.")
 
@@ -224,6 +225,54 @@ def tracking_upload_stats(path: Path) -> dict[str, int]:
     }
 
 
+def cancelled_tracking_rows(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+
+    with path.open(newline="", encoding="utf-8-sig") as file:
+        rows = list(csv.DictReader(file, delimiter="\t"))
+
+    cancelled_rows = []
+    for row in rows:
+        has_cancelled_value = any(
+            str(row.get(column, "") or "").strip().upper() == "CANCELLED"
+            for column in (
+                "Tracking Number",
+                "Shipping Carrier Code",
+                "Shipping Class Code",
+            )
+        )
+        prevent_processing = (
+            str(row.get("Prevent Site Processing", "") or "").strip().upper() == "TRUE"
+        )
+        if has_cancelled_value or prevent_processing:
+            cancelled_rows.append(row)
+
+    return cancelled_rows
+
+
+def render_cancelled_tracking_rows(path: Path) -> None:
+    rows = cancelled_tracking_rows(path)
+    if not rows:
+        st.success("No cancelled rows found in the tracking upload file.")
+        return
+
+    st.warning(f"Cancelled rows found: {len(rows)}")
+    visible_columns = [
+        "Invoice No",
+        "Tracking Number",
+        "Date Shipped",
+        "Shipping Carrier Code",
+        "Shipping Class Code",
+        "Prevent Site Processing",
+    ]
+    st.dataframe(
+        [{column: row.get(column, "") for column in visible_columns} for row in rows],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
 def unmapped_courier_rows(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
@@ -244,13 +293,7 @@ def main() -> None:
         st.session_state.automation_running = False
 
     st.title("Mark Orders Shipped Automation")
-    st.caption(
-        "Generates the final upload handoff file."
-    )
-
-    st.warning(
-        "Rithum/CA upload is disabled. This dashboard only generates the final tab-delimited output file."
-    )
+    st.caption("Generates the final upload handoff file.")
 
     left, right = st.columns([2, 1])
 
@@ -269,6 +312,7 @@ def main() -> None:
         render_generated_files()
 
     with left:
+        render_cancelled_tracking_rows(FINAL_OUTPUT_PATH)
         st.subheader("Run Status")
         workflow_status = st.empty()
         stage_status = st.empty()
