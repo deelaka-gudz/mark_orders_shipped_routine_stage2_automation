@@ -304,6 +304,60 @@ def click_amazon_mfa_sign_in(page) -> None:
     raise RuntimeError("Could not click Amazon MFA Sign in button.") from last_error
 
 
+def select_seller_central_uk_account(page) -> None:
+    account = page.get_by_text("My Beauty And Care", exact=True).first
+    account.wait_for(state="visible", timeout=30000)
+
+    united_kingdom = page.get_by_text("United Kingdom", exact=True).first
+    try:
+        united_kingdom.wait_for(state="visible", timeout=3000)
+    except PlaywrightTimeoutError:
+        account.click(timeout=10000)
+        united_kingdom.wait_for(state="visible", timeout=10000)
+
+    united_kingdom.scroll_into_view_if_needed(timeout=5000)
+    united_kingdom.click(timeout=10000)
+
+    select_account_candidates = [
+        page.get_by_role("button", name=re.compile("select account", re.I)),
+        page.locator("button:has-text('Select account')"),
+        page.locator("kat-button:has-text('Select account')"),
+        page.get_by_text(re.compile("^select account$", re.I)),
+    ]
+
+    last_error: Exception | None = None
+    for locator in select_account_candidates:
+        try:
+            button = locator.first
+            button.wait_for(state="visible", timeout=10000)
+            button.click(timeout=10000)
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+            _wait_for_network_idle(page)
+            return
+        except (PlaywrightTimeoutError, PlaywrightError) as error:
+            last_error = error
+
+    raise RuntimeError(
+        "Could not click Seller Central Select account button."
+    ) from last_error
+
+
+def seller_central_account_switcher_is_visible(page) -> bool:
+    try:
+        page.get_by_text("Select an account", exact=True).first.wait_for(
+            state="visible",
+            timeout=10000,
+        )
+        return True
+    except PlaywrightTimeoutError:
+        return False
+
+
+def open_seller_central_home(page) -> None:
+    page.goto("https://sellercentral.amazon.co.uk/home", wait_until="domcontentloaded")
+    _wait_for_network_idle(page)
+
+
 @dataclass(frozen=True)
 class Config:
     amazon_url: str
@@ -372,7 +426,12 @@ def run(config: Config) -> int:
                 return OTP_REQUIRED_RETURN_CODE
             click_amazon_mfa_sign_in(page)
             _log_step("Step 8: Clicked Amazon MFA Sign in button")
-            time.sleep(2)
+            if seller_central_account_switcher_is_visible(page):
+                select_seller_central_uk_account(page)
+                _log_step("Step 9: Selected My Beauty And Care United Kingdom account")
+            else:
+                open_seller_central_home(page)
+                _log_step("Step 9: Opened Amazon Seller Central home")
             return 0
         finally:
             try:
