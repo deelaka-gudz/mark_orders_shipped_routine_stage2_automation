@@ -150,6 +150,11 @@ def run_stage(
         stage_status.success(
             f"{stage_name} completed in {format_duration(elapsed_seconds)}"
         )
+    elif stage_name == "Stage 3" and return_code == OTP_REQUIRED_RETURN_CODE:
+        stage_status.warning(
+            f"{stage_name} needs Amazon OTP after "
+            f"{format_duration(elapsed_seconds)}"
+        )
     else:
         stage_status.error(
             f"{stage_name} failed after {format_duration(elapsed_seconds)}"
@@ -324,7 +329,7 @@ def render_amazon_otp_dialog() -> None:
         otp_code = st.text_input(
             "Amazon OTP code",
             key="amazon_otp_input",
-            max_chars=20,
+            max_chars=6,
         )
         if st.button("Continue Stage 3", type="primary"):
             _store_amazon_otp_and_continue(otp_code)
@@ -337,7 +342,7 @@ def render_amazon_otp_dialog() -> None:
         otp_code = st.text_input(
             "Amazon OTP code",
             key="amazon_otp_input",
-            max_chars=20,
+            max_chars=6,
         )
         if st.button("Continue Stage 3", type="primary", use_container_width=True):
             _store_amazon_otp_and_continue(otp_code)
@@ -347,8 +352,8 @@ def render_amazon_otp_dialog() -> None:
 
 def _store_amazon_otp_and_continue(otp_code: str) -> None:
     cleaned_otp = str(otp_code or "").strip()
-    if not cleaned_otp:
-        st.error("Enter the Amazon OTP code before continuing.")
+    if not re.fullmatch(r"\d{6}", cleaned_otp):
+        st.error("Enter the 6-digit Amazon OTP code before continuing.")
         return
 
     st.session_state.amazon_otp = cleaned_otp
@@ -467,9 +472,9 @@ def main() -> None:
                     st.session_state.awaiting_amazon_otp = True
                     st.session_state.pending_stage3 = True
                     workflow_status.warning(
-                        "Stage 3 reached Step 8. Enter Amazon OTP to continue."
+                        "Stage 3 reached the Amazon OTP step. Enter OTP to continue."
                     )
-                    step_status.warning("Waiting for Amazon OTP at Stage 3 Step 8.")
+                    step_status.warning("Waiting for Amazon OTP during Stage 3.")
                     render_amazon_otp_dialog()
                     break
                 if stage_name == "Stage 3":
@@ -499,7 +504,15 @@ def main() -> None:
         with run_summary_slot.container():
             with st.expander("Run Summary", expanded=True):
                 for result in results:
-                    status = "completed" if result.return_code == 0 else "failed"
+                    if result.return_code == 0:
+                        status = "completed"
+                    elif (
+                        result.name == "Stage 3"
+                        and result.return_code == OTP_REQUIRED_RETURN_CODE
+                    ):
+                        status = "waiting for Amazon OTP"
+                    else:
+                        status = "failed"
                     st.write(
                         f"{result.name}: {status} in "
                         f"{format_duration(result.elapsed_seconds)}"
