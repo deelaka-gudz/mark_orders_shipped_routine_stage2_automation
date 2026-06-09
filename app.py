@@ -20,7 +20,9 @@ UNMAPPED_COURIERS_PATH = DOWNLOADS_DIR / "unmapped_courier_services.csv"
 STAGE_SCRIPTS = [
     ("Stage 1", ROOT / "automation_stage01.py"),
     ("Stage 2", ROOT / "automation_stage02.py"),
+    ("Stage 3", ROOT / "automation_stage03.py"),
 ]
+OTP_REQUIRED_RETURN_CODE = 8
 
 LOG_PREFIX_RE = re.compile(r"^\[(?P<level>[A-Z]+)\]\s*(?P<message>.*)$")
 STEP_RE = re.compile(r"(Step\s+[0-9]+(?:\.[0-9]+)*[^:]*)")
@@ -95,11 +97,14 @@ def run_stage(
     step_status,
     uptime_status,
     log_box,
+    extra_env: dict[str, str] | None = None,
 ) -> StageResult:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["HEADLESS"] = "true"
     env["AUTOMATION_HEADLESS"] = "true"
+    if extra_env:
+        env.update(extra_env)
 
     stage_start = time.monotonic()
     stage_status.info(f"{stage_name} running")
@@ -312,6 +317,46 @@ def unmapped_courier_rows(path: Path) -> list[dict[str, str]]:
         ]
 
 
+def render_amazon_otp_dialog() -> None:
+    dialog = getattr(st, "dialog", None) or getattr(st, "experimental_dialog", None)
+    if dialog is None:
+        st.warning("Enter the current Amazon authenticator code to continue Stage 3.")
+        otp_code = st.text_input(
+            "Amazon OTP code",
+            key="amazon_otp_input",
+            max_chars=20,
+        )
+        if st.button("Continue Stage 3", type="primary"):
+            _store_amazon_otp_and_continue(otp_code)
+        return
+
+    @dialog("Amazon OTP Required")
+    def amazon_otp_modal() -> None:
+        st.write("Enter the current Amazon authenticator app code for Stage 3.")
+        st.caption("Use a fresh code because it changes quickly.")
+        otp_code = st.text_input(
+            "Amazon OTP code",
+            key="amazon_otp_input",
+            max_chars=20,
+        )
+        if st.button("Continue Stage 3", type="primary", use_container_width=True):
+            _store_amazon_otp_and_continue(otp_code)
+
+    amazon_otp_modal()
+
+
+def _store_amazon_otp_and_continue(otp_code: str) -> None:
+    cleaned_otp = str(otp_code or "").strip()
+    if not cleaned_otp:
+        st.error("Enter the Amazon OTP code before continuing.")
+        return
+
+    st.session_state.amazon_otp = cleaned_otp
+    st.session_state.awaiting_amazon_otp = False
+    st.session_state.pending_stage3 = True
+    st.rerun()
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Mark Orders Shipped Automation",
@@ -319,6 +364,12 @@ def main() -> None:
     )
     if "automation_running" not in st.session_state:
         st.session_state.automation_running = False
+    if "awaiting_amazon_otp" not in st.session_state:
+        st.session_state.awaiting_amazon_otp = False
+    if "pending_stage3" not in st.session_state:
+        st.session_state.pending_stage3 = False
+    if "amazon_otp" not in st.session_state:
+        st.session_state.amazon_otp = ""
 
     st.title("Mark Orders Shipped Automation")
     st.caption("Generates the final upload handoff file.")
@@ -353,9 +404,24 @@ def main() -> None:
         uptime_status = st.empty()
         log_box = st.empty()
 
-        if not run_button:
+        if run_button:
+            st.session_state.amazon_otp = ""
+            st.session_state.awaiting_amazon_otp = False
+            st.session_state.pending_stage3 = False
+
+        if st.session_state.awaiting_amazon_otp:
+            render_amazon_otp_dialog()
+
+        run_requested = run_button or (
+            st.session_state.pending_stage3 and bool(st.session_state.amazon_otp)
+        )
+
+        if not run_requested:
             workflow_status.info("Idle")
-            step_status.info("No run started yet.")
+            if st.session_state.awaiting_amazon_otp:
+                step_status.warning("Waiting for Amazon OTP to continue Stage 3.")
+            else:
+                step_status.info("No run started yet.")
             render_log_panel(log_box, ["Logs will appear here after you start a run."])
             return
 
@@ -373,9 +439,18 @@ def main() -> None:
         results: list[StageResult] = []
 
         workflow_status.info("Automation running")
+        stages_to_run = (
+            [STAGE_SCRIPTS[-1]]
+            if st.session_state.pending_stage3 and st.session_state.amazon_otp
+            else STAGE_SCRIPTS
+        )
 
         try:
-            for stage_name, script_path in STAGE_SCRIPTS:
+            for stage_name, script_path in stages_to_run:
+                extra_env = {}
+                if stage_name == "Stage 3":
+                    extra_env["AMAZON_OTP"] = st.session_state.amazon_otp
+
                 result = run_stage(
                     stage_name,
                     script_path,
@@ -384,15 +459,31 @@ def main() -> None:
                     step_status,
                     uptime_status,
                     log_box,
+                    extra_env=extra_env,
                 )
                 results.append(result)
+                if stage_name == "Stage 3" and result.return_code == OTP_REQUIRED_RETURN_CODE:
+                    st.session_state.amazon_otp = ""
+                    st.session_state.awaiting_amazon_otp = True
+                    st.session_state.pending_stage3 = True
+                    workflow_status.warning(
+                        "Stage 3 reached Step 8. Enter Amazon OTP to continue."
+                    )
+                    step_status.warning("Waiting for Amazon OTP at Stage 3 Step 8.")
+                    render_amazon_otp_dialog()
+                    break
+                if stage_name == "Stage 3":
+                    st.session_state.amazon_otp = ""
+                    st.session_state.pending_stage3 = False
+                    st.session_state.awaiting_amazon_otp = False
                 if result.return_code != 0:
                     workflow_status.error(f"Stopped because {stage_name} failed.")
                     break
             else:
                 total_elapsed = time.monotonic() - workflow_start
                 workflow_status.success(
-                    f"Stage 1 + Stage 2 completed in {format_duration(total_elapsed)}"
+                    " + ".join(stage_name for stage_name, _ in stages_to_run)
+                    + f" completed in {format_duration(total_elapsed)}"
                 )
                 uptime_status.metric("Total uptime", format_duration(total_elapsed))
         finally:
