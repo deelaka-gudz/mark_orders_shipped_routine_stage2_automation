@@ -61,6 +61,7 @@ class Config:
     non_gb_unmatched_output_path: Path
     full_orders_matched_output_path: Path
     tracking_upload_output_path: Path
+    cancelled_tracking_orders_output_path: Path
     courier_conversions_path: Path
     unmapped_courier_services_output_path: Path
     full_orders_match_key_column: str
@@ -90,6 +91,9 @@ class Config:
                 "downloads/stage2_full_orders_matched.csv"
             ),
             tracking_upload_output_path=Path("downloads/tracking_upload_template.txt"),
+            cancelled_tracking_orders_output_path=Path(
+                "downloads/cancelled_tracking_orders.csv"
+            ),
             courier_conversions_path=Path("courier_conversions.json"),
             unmapped_courier_services_output_path=Path(
                 "downloads/unmapped_courier_services.csv"
@@ -552,6 +556,15 @@ def match_stage1_unmatched_rows_to_full_orders(
         )
         remove_shipping_carrier_source_column(upload_template_rows)
         apply_prevent_site_processing_flags(upload_template_rows)
+        cancelled_tracking_count = write_cancelled_tracking_orders_file(
+            upload_template_rows,
+            config.cancelled_tracking_orders_output_path,
+        )
+        _log_step(
+            "Step 170.1: Saved "
+            f"{cancelled_tracking_count} cancelled tracking orders to "
+            f"{config.cancelled_tracking_orders_output_path}"
+        )
         write_tracking_upload_template_file(
             upload_template_rows,
             config.tracking_upload_output_path,
@@ -607,6 +620,15 @@ def match_stage1_unmatched_rows_to_full_orders(
         )
         remove_shipping_carrier_source_column(upload_template_rows)
         apply_prevent_site_processing_flags(upload_template_rows)
+        cancelled_tracking_count = write_cancelled_tracking_orders_file(
+            upload_template_rows,
+            config.cancelled_tracking_orders_output_path,
+        )
+        _log_step(
+            "Step 170.1: Saved "
+            f"{cancelled_tracking_count} cancelled tracking orders to "
+            f"{config.cancelled_tracking_orders_output_path}"
+        )
         write_tracking_upload_template_file(
             upload_template_rows,
             config.tracking_upload_output_path,
@@ -972,6 +994,15 @@ def match_stage1_unmatched_rows_to_full_orders(
     _log_step("Step 168: Selected the CA Tracking Update Out folder")
     _log_step("Step 169: Opened Save as type selection equivalent")
     _log_step("Step 170: Prepared Text (Tab delimited) upload format equivalent")
+    cancelled_tracking_count = write_cancelled_tracking_orders_file(
+        upload_template_rows,
+        config.cancelled_tracking_orders_output_path,
+    )
+    _log_step(
+        "Step 170.1: Saved "
+        f"{cancelled_tracking_count} cancelled tracking orders to "
+        f"{config.cancelled_tracking_orders_output_path}"
+    )
     write_tracking_upload_template_file(
         upload_template_rows,
         config.tracking_upload_output_path,
@@ -1082,6 +1113,48 @@ def write_tracking_upload_template_file(
         writer.writerows(
             {column: row.get(column, "") for column in fieldnames} for row in rows
         )
+
+
+def write_cancelled_tracking_orders_file(
+    rows: list[dict[str, str]],
+    output_path: Path,
+) -> int:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "Invoice No",
+        "Tracking Number",
+        "Date Shipped",
+        "Shipping Carrier Code",
+        "Shipping Class Code",
+        "Prevent Site Processing",
+    ]
+    cancelled_rows = [
+        {column: row.get(column, "") for column in fieldnames}
+        for row in rows
+        if _is_cancelled_upload_row(row)
+    ]
+
+    with output_path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(cancelled_rows)
+
+    return len(cancelled_rows)
+
+
+def _is_cancelled_upload_row(row: dict[str, str]) -> bool:
+    has_cancelled_value = any(
+        str(row.get(column, "") or "").strip().upper() == "CANCELLED"
+        for column in (
+            "Tracking Number",
+            "Shipping Carrier Code",
+            "Shipping Class Code",
+        )
+    )
+    prevent_processing = (
+        str(row.get("Prevent Site Processing", "") or "").strip().upper() == "TRUE"
+    )
+    return has_cancelled_value or prevent_processing
 
 
 def build_tracking_upload_template_rows(
