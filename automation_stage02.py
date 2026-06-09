@@ -1239,8 +1239,8 @@ def _date_shipped_value(row: dict[str, str]) -> str:
     dc_datetime = _parse_template_datetime(dc_date_despatched)
 
     if estimated_datetime and dc_datetime and estimated_datetime > dc_datetime:
-        return dc_date_despatched
-    return estimated_ship_date
+        return _format_template_date_only(dc_date_despatched)
+    return _format_template_date_only(estimated_ship_date)
 
 
 def _parse_template_datetime(value: str):
@@ -1254,6 +1254,13 @@ def _parse_template_datetime(value: str):
         except ValueError:
             continue
     return None
+
+
+def _format_template_date_only(value: str) -> str:
+    parsed_datetime = _parse_template_datetime(value)
+    if parsed_datetime:
+        return time.strftime("%d/%m/%Y", parsed_datetime)
+    return value.strip()
 
 
 def _count_template_values(rows: list[dict[str, str]], column: str) -> int:
