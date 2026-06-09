@@ -510,6 +510,12 @@ def match_stage1_unmatched_rows_to_full_orders(
             [],
             config.full_orders_match_key_column,
         )
+        if not upload_source_rows:
+            print(
+                "[WARN] Stage 1 matched output has 0 rows. Skipping tracking upload "
+                "template generation until the Rithum order export contains orders."
+            )
+            return None
         full_order_rows = _read_csv(full_orders_path)
         full_orders_key_column = _resolve_column(
             full_order_rows[0] if full_order_rows else {},
@@ -572,6 +578,12 @@ def match_stage1_unmatched_rows_to_full_orders(
             [],
             config.full_orders_match_key_column,
         )
+        if not upload_source_rows:
+            print(
+                "[WARN] Stage 1 matched output has 0 rows. Skipping tracking upload "
+                "template generation until the Rithum order export contains orders."
+            )
+            return None
         full_orders_lookup = _build_full_orders_lookup(
             full_order_rows,
             full_orders_key_column,

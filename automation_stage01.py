@@ -1029,11 +1029,13 @@ def match_order_file_to_dc_shipping_report(config: Config) -> Path | None:
     dc_key_column = config.dc_match_key_column
 
     if not order_rows:
-        raise RuntimeError(
-            "Rithum order export has 0 order rows. The downloaded "
+        print(
+            "[WARN] Rithum order export has 0 order rows. The downloaded "
             f"Basic Layout file only contains headers: {config.rithum_orders_output_path}. "
-            "Check the selected Rithum saved filter/date range, then rerun Stage 1."
+            "Check the selected Rithum saved filter/date range, then rerun Stage 1. "
+            "No matched output or tracking upload file will be generated for this run."
         )
+        return None
     if not dc_rows:
         raise RuntimeError(
             "DC shipping report has 0 rows. Check the Helm Shipping Report export, "
