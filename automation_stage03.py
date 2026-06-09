@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ from playwright.sync_api import sync_playwright
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 AMAZON_HOME_URL = "https://www.amazon.co.uk/"
+OTP_REQUIRED_RETURN_CODE = 8
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -283,7 +285,7 @@ class Config:
             amazon_password=(
                 os.getenv("AMAZON_PASSWORD") or _require_env("HELM_PASSWORD")
             ),
-            amazon_otp=_require_env("AMAZON_OTP").strip(),
+            amazon_otp=str(os.getenv("AMAZON_OTP")).strip(),
             headless=_env_flag(
                 "AUTOMATION_HEADLESS", default=_env_flag("HEADLESS", default=False)
             ),
@@ -291,7 +293,7 @@ class Config:
         )
 
 
-def run(config: Config) -> None:
+def run(config: Config) -> int:
     _log_info(config.debug, f"Loaded .env from: {DOTENV_PATH}")
     _log_info(config.debug, f"Amazon URL: {config.amazon_url}")
 
@@ -316,6 +318,12 @@ def run(config: Config) -> None:
             _log_step("Step 6: Entered Amazon password")
             click_amazon_sign_in_submit(page)
             _log_step("Step 7: Clicked Amazon Sign in submit button")
+            if not config.amazon_otp:
+                print(
+                    "[OTP_REQUIRED] Step 8: Amazon OTP code is required. "
+                    "Enter the current authenticator code in the Streamlit modal."
+                )
+                return OTP_REQUIRED_RETURN_CODE
             fill_amazon_otp(page, config.amazon_otp)
             _log_step("Step 8: Entered Amazon OTP code")
             click_amazon_remember_device(page)
@@ -323,6 +331,7 @@ def run(config: Config) -> None:
             click_amazon_mfa_sign_in(page)
             _log_step("Step 10: Clicked Amazon MFA Sign in button")
             time.sleep(2)
+            return 0
         finally:
             try:
                 context.close()
