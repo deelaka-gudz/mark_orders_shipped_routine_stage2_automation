@@ -1,3 +1,4 @@
+import csv
 import os
 import re
 import sys
@@ -12,6 +13,9 @@ from playwright.sync_api import sync_playwright
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 AMAZON_HOME_URL = "https://sellercentral.amazon.co.uk/"
+CANCELLED_TRACKING_ORDERS_PATH = (
+    Path(__file__).resolve().parent / "downloads" / "cancelled_tracking_orders.csv"
+)
 OTP_REQUIRED_RETURN_CODE = 8
 OTP_INPUT_TIMEOUT_SECONDS = 10
 
@@ -358,6 +362,61 @@ def open_seller_central_home(page) -> None:
     _wait_for_network_idle(page)
 
 
+def load_cancelled_tracking_orders(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        print(f"[WARN] Cancelled tracking orders file does not exist: {path}")
+        return []
+
+    with path.open("r", newline="", encoding="utf-8-sig") as file:
+        rows = [
+            row
+            for row in csv.DictReader(file)
+            if str(row.get("Invoice No", "") or "").strip()
+        ]
+    return rows
+
+
+def search_seller_central_invoice_no(page, invoice_no: str) -> None:
+    candidates = [
+        page.locator("#sc-search-field"),
+        page.locator("form#sc-global-search-form input[name='query']"),
+        page.locator("input.search-input[placeholder='Search']"),
+        page.get_by_placeholder("Search"),
+    ]
+
+    last_error: Exception | None = None
+    for locator in candidates:
+        try:
+            search_field = locator.first
+            search_field.wait_for(state="visible", timeout=15000)
+            search_field.click(timeout=10000)
+            search_field.fill(invoice_no, timeout=10000)
+            search_field.press("Enter", timeout=10000)
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+            _wait_for_network_idle(page)
+            return
+        except (PlaywrightTimeoutError, PlaywrightError) as error:
+            last_error = error
+
+    raise RuntimeError("Could not search Seller Central invoice number.") from last_error
+
+
+def search_cancelled_invoice_numbers(
+    page,
+    cancelled_orders: list[dict[str, str]],
+) -> None:
+    for index, order in enumerate(cancelled_orders, start=1):
+        invoice_no = str(order.get("Invoice No", "") or "").strip()
+        if not invoice_no:
+            continue
+
+        search_seller_central_invoice_no(page, invoice_no)
+        _log_step(
+            f"Step 11: Searched cancelled invoice {index}/"
+            f"{len(cancelled_orders)}: {invoice_no}"
+        )
+
+
 @dataclass(frozen=True)
 class Config:
     amazon_url: str
@@ -432,6 +491,15 @@ def run(config: Config) -> int:
             else:
                 open_seller_central_home(page)
                 _log_step("Step 9: Opened Amazon Seller Central home")
+            cancelled_orders = load_cancelled_tracking_orders(
+                CANCELLED_TRACKING_ORDERS_PATH
+            )
+            _log_step(
+                "Step 10: Loaded "
+                f"{len(cancelled_orders)} cancelled tracking orders from "
+                f"{CANCELLED_TRACKING_ORDERS_PATH}"
+            )
+            search_cancelled_invoice_numbers(page, cancelled_orders)
             return 0
         finally:
             try:
