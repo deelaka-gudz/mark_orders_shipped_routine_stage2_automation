@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import csv
+import html
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +57,36 @@ def parse_log_line(line: str) -> tuple[str, str, str]:
     return level, step, message
 
 
+def render_log_panel(log_box, lines: list[str]) -> None:
+    rendered_lines = "\n".join(
+        f"<div>{html.escape(line)}</div>" for line in lines[-250:]
+    )
+    log_box.markdown(
+        f"""
+        <div style="
+            height: 350px;
+            overflow-y: auto;
+            border-radius: 8px;
+            background: #0e1117;
+            border: 1px solid rgba(250, 250, 250, 0.12);
+                padding: 16px;
+        ">
+            <div style="
+                margin: 0;
+                white-space: normal;
+                word-break: break-word;
+                color: #fafafa;
+                font-size: 0.9rem;
+                line-height: 1.45;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+                    'Liberation Mono', 'Courier New', monospace;
+            ">{rendered_lines}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def run_stage(
     stage_name: str,
     script_path: Path,
@@ -100,12 +131,9 @@ def run_stage(
         log_lines.append(formatted_line)
 
         stage_status.info(f"{stage_name} running")
-        if step:
-            step_status.info(f"{step}: {message}")
-        else:
-            step_status.info(message)
+        step_status.info(message)
         uptime_status.metric("Current stage uptime", format_duration(elapsed))
-        log_box.code("\n".join(log_lines[-250:]), language="text")
+        render_log_panel(log_box, log_lines)
 
         if level == "WARN":
             st.toast(message)
@@ -181,7 +209,7 @@ def render_downloads() -> None:
             file_name=FINAL_OUTPUT_PATH.name,
             mime="text/plain",
         )
-        
+
     else:
         st.info("Final output is not available yet. Click 'Click to Start' first.")
 
@@ -308,8 +336,13 @@ def main() -> None:
             key="start_automation_button",
         )
         st.caption("Keep this browser tab open while the automation is running.")
-        render_downloads()
-        render_generated_files()
+        final_output_slot = st.empty()
+        generated_files_slot = st.empty()
+        run_summary_slot = st.empty()
+        with final_output_slot.container():
+            render_downloads()
+        with generated_files_slot.container():
+            render_generated_files()
 
     with left:
         render_cancelled_tracking_rows(FINAL_OUTPUT_PATH)
@@ -323,9 +356,7 @@ def main() -> None:
         if not run_button:
             workflow_status.info("Idle")
             step_status.info("No run started yet.")
-            log_box.code(
-                "Logs will appear here after you start a run.", language="text"
-            )
+            render_log_panel(log_box, ["Logs will appear here after you start a run."])
             return
 
         st.session_state.automation_running = True
@@ -374,14 +405,19 @@ def main() -> None:
                 key="restart_automation_button",
             )
 
-        with st.expander("Run Summary", expanded=True):
-            for result in results:
-                status = "completed" if result.return_code == 0 else "failed"
-                st.write(
-                    f"{result.name}: {status} in {format_duration(result.elapsed_seconds)}"
-                )
+        with run_summary_slot.container():
+            with st.expander("Run Summary", expanded=True):
+                for result in results:
+                    status = "completed" if result.return_code == 0 else "failed"
+                    st.write(
+                        f"{result.name}: {status} in "
+                        f"{format_duration(result.elapsed_seconds)}"
+                    )
 
-        render_downloads()
+        with final_output_slot.container():
+            render_downloads()
+        with generated_files_slot.container():
+            render_generated_files()
 
 
 if __name__ == "__main__":
