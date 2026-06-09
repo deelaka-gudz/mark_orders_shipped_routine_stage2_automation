@@ -11,8 +11,9 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
-AMAZON_HOME_URL = "https://www.amazon.co.uk/"
+AMAZON_HOME_URL = "https://sellercentral.amazon.co.uk/"
 OTP_REQUIRED_RETURN_CODE = 8
+OTP_INPUT_TIMEOUT_SECONDS = 10
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -45,44 +46,12 @@ def _wait_for_network_idle(page, timeout_ms: int = 10000) -> None:
         pass
 
 
-def open_amazon_account_list_flyout(page) -> None:
+def click_seller_central_log_in(page) -> None:
     candidates = [
-        page.locator("#nav-link-accountList"),
-        page.locator("#nav-link-accountList .nav-flyout-button"),
-        page.get_by_role("link", name=re.compile("account", re.I)),
-        page.get_by_text(re.compile("Hello, sign in", re.I)),
-    ]
-
-    last_error: Exception | None = None
-    for locator in candidates:
-        try:
-            target = locator.first
-            target.wait_for(state="visible", timeout=10000)
-            target.hover(timeout=10000)
-            try:
-                page.locator(".nav-action-signin-button").first.wait_for(
-                    state="visible",
-                    timeout=5000,
-                )
-                return
-            except PlaywrightTimeoutError:
-                target.click(timeout=10000)
-                page.locator(".nav-action-signin-button").first.wait_for(
-                    state="visible",
-                    timeout=10000,
-                )
-                return
-        except (PlaywrightTimeoutError, PlaywrightError) as error:
-            last_error = error
-
-    raise RuntimeError("Could not open Amazon Account & Lists flyout.") from last_error
-
-
-def click_amazon_flyout_sign_in(page) -> None:
-    candidates = [
-        page.locator(".nav-action-signin-button[data-nav-role='signin']"),
-        page.locator("#nav-flyout-ya-signin .nav-action-signin-button"),
-        page.get_by_role("link", name=re.compile("^sign in$", re.I)),
+        page.locator("#SCUK_SOA_WP_LOGIN_N_1374680C a[href*='/signin']"),
+        page.locator("a[href*='sellercentral.amazon.co.uk/signin']"),
+        page.get_by_role("link", name=re.compile("^log in$", re.I)),
+        page.get_by_text(re.compile("^log in$", re.I)),
     ]
 
     last_error: Exception | None = None
@@ -97,11 +66,12 @@ def click_amazon_flyout_sign_in(page) -> None:
         except (PlaywrightTimeoutError, PlaywrightError) as error:
             last_error = error
 
-    raise RuntimeError("Could not click Amazon flyout Sign in button.") from last_error
+    raise RuntimeError("Could not click Seller Central Log in link.") from last_error
 
 
 def fill_amazon_email(page, email: str) -> None:
     candidates = [
+        page.locator("#ap_email"),
         page.locator("#ap_email_login"),
         page.locator("input[name='email']"),
         page.get_by_label(re.compile("mobile number|email", re.I)),
@@ -126,10 +96,11 @@ def fill_amazon_email(page, email: str) -> None:
 
 def click_amazon_continue(page) -> None:
     candidates = [
-        page.locator("#continue"),
+        page.locator("input#continue[type='submit']"),
+        page.locator("span#continue input[type='submit']"),
         page.locator("input[type='submit'][aria-labelledby='continue-announce']"),
         page.get_by_role("button", name=re.compile("^continue$", re.I)),
-        page.locator("span#continue input[type='submit']"),
+        page.locator("#continue"),
     ]
 
     last_error: Exception | None = None
@@ -197,6 +168,9 @@ def click_amazon_sign_in_submit(page) -> None:
 
 
 def fill_amazon_otp(page, otp_code: str) -> None:
+    if not re.fullmatch(r"\d{6}", otp_code):
+        raise RuntimeError("Amazon OTP code must be exactly 6 digits.")
+
     candidates = [
         page.locator("#auth-mfa-otpcode"),
         page.locator("input[name='otpCode']"),
@@ -220,26 +194,91 @@ def fill_amazon_otp(page, otp_code: str) -> None:
     raise RuntimeError("Could not fill Amazon OTP input.") from last_error
 
 
-def click_amazon_remember_device(page) -> None:
-    candidates = [
-        page.locator("label[for='auth-mfa-remember-device']"),
-        page.locator("#auth-mfa-remember-device"),
-        page.get_by_label(re.compile("don't require code|do not require code", re.I)),
-    ]
+def amazon_otp_field_has_six_digits(page) -> bool:
+    try:
+        field = page.locator("#auth-mfa-otpcode").first
+        field.wait_for(state="visible", timeout=1000)
+        value = str(field.input_value(timeout=1000) or "").strip()
+        return bool(re.fullmatch(r"\d{6}", value))
+    except (PlaywrightTimeoutError, PlaywrightError):
+        return False
 
-    last_error: Exception | None = None
-    for locator in candidates:
-        try:
-            target = locator.first
-            target.wait_for(state="visible", timeout=10000)
-            target.click(timeout=10000)
-            return
-        except (PlaywrightTimeoutError, PlaywrightError) as error:
-            last_error = error
 
-    raise RuntimeError(
-        "Could not click Amazon remember-device checkbox."
-    ) from last_error
+def wait_for_manual_browser_otp(page, timeout_seconds: int) -> bool:
+    print(
+        f"[ACTION] Enter the 6-digit Amazon OTP in the browser within "
+        f"{timeout_seconds}s, or type it in this terminal."
+    )
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if amazon_otp_field_has_six_digits(page):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def amazon_otp_or_prompt(config) -> str | None:
+    otp_code = str(config.amazon_otp or "").strip()
+    if re.fullmatch(r"\d{6}", otp_code):
+        return otp_code
+
+    if not config.headless and sys.stdin.isatty():
+        return prompt_for_otp_with_timeout(OTP_INPUT_TIMEOUT_SECONDS)
+
+    return None
+
+
+def prompt_for_otp_with_timeout(timeout_seconds: int) -> str | None:
+    if os.name == "nt":
+        return prompt_for_otp_with_timeout_windows(timeout_seconds)
+
+    print(
+        f"Enter the current 6-digit Amazon OTP code within {timeout_seconds}s: ",
+        end="",
+        flush=True,
+    )
+    return None
+
+
+def prompt_for_otp_with_timeout_windows(timeout_seconds: int) -> str | None:
+    import msvcrt
+
+    print(
+        f"Enter the current 6-digit Amazon OTP code within {timeout_seconds}s: ",
+        end="",
+        flush=True,
+    )
+    deadline = time.monotonic() + timeout_seconds
+    digits: list[str] = []
+
+    while time.monotonic() < deadline:
+        if not msvcrt.kbhit():
+            time.sleep(0.05)
+            continue
+
+        character = msvcrt.getwch()
+        if character in {"\r", "\n"}:
+            break
+        if character == "\003":
+            raise KeyboardInterrupt
+        if character in {"\b", "\x7f"}:
+            if digits:
+                digits.pop()
+                print("\b \b", end="", flush=True)
+            continue
+        if character.isdigit() and len(digits) < 6:
+            digits.append(character)
+            print(character, end="", flush=True)
+            if len(digits) == 6:
+                break
+
+    print()
+    otp_code = "".join(digits)
+    if re.fullmatch(r"\d{6}", otp_code):
+        return otp_code
+
+    print("Amazon OTP was not entered within 10 seconds or was not 6 digits.")
+    return None
 
 
 def click_amazon_mfa_sign_in(page) -> None:
@@ -305,31 +344,34 @@ def run(config: Config) -> int:
         try:
             page.goto(config.amazon_url, wait_until="domcontentloaded")
             _wait_for_network_idle(page)
-            _log_step("Step 1: Opened Amazon UK home page")
-            open_amazon_account_list_flyout(page)
-            _log_step("Step 2: Opened Amazon Account & Lists flyout")
-            click_amazon_flyout_sign_in(page)
-            _log_step("Step 3: Clicked Amazon flyout Sign in button")
+            _log_step("Step 1: Opened Amazon Seller Central UK")
+            click_seller_central_log_in(page)
+            _log_step("Step 2: Clicked Seller Central Log in link")
             fill_amazon_email(page, config.amazon_email)
-            _log_step("Step 4: Entered Amazon email")
+            _log_step("Step 3: Entered Amazon email")
             click_amazon_continue(page)
-            _log_step("Step 5: Clicked Amazon Continue button")
+            _log_step("Step 4: Clicked Amazon Continue button")
             fill_amazon_password(page, config.amazon_password)
-            _log_step("Step 6: Entered Amazon password")
+            _log_step("Step 5: Entered Amazon password")
             click_amazon_sign_in_submit(page)
-            _log_step("Step 7: Clicked Amazon Sign in submit button")
-            if not config.amazon_otp:
+            _log_step("Step 6: Clicked Amazon Sign in submit button")
+            amazon_otp = amazon_otp_or_prompt(config)
+            if amazon_otp:
+                fill_amazon_otp(page, amazon_otp)
+                _log_step("Step 7: Entered Amazon OTP code")
+            elif not config.headless and wait_for_manual_browser_otp(
+                page,
+                OTP_INPUT_TIMEOUT_SECONDS,
+            ):
+                _log_step("Step 7: Confirmed Amazon OTP code was entered manually")
+            else:
                 print(
-                    "[OTP_REQUIRED] Step 8: Amazon OTP code is required. "
+                    "[OTP_REQUIRED] Step 7: Amazon OTP code is required. "
                     "Enter the current authenticator code in the Streamlit modal."
                 )
                 return OTP_REQUIRED_RETURN_CODE
-            fill_amazon_otp(page, config.amazon_otp)
-            _log_step("Step 8: Entered Amazon OTP code")
-            click_amazon_remember_device(page)
-            _log_step("Step 9: Selected Amazon remember-device checkbox")
             click_amazon_mfa_sign_in(page)
-            _log_step("Step 10: Clicked Amazon MFA Sign in button")
+            _log_step("Step 8: Clicked Amazon MFA Sign in button")
             time.sleep(2)
             return 0
         finally:
@@ -340,4 +382,4 @@ def run(config: Config) -> int:
 
 
 if __name__ == "__main__":
-    run(Config.load())
+    sys.exit(run(Config.load()))
