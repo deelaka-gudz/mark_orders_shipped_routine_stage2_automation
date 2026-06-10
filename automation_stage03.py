@@ -212,6 +212,23 @@ def amazon_otp_field_has_six_digits(page) -> bool:
         return False
 
 
+def amazon_otp_field_is_visible(page, timeout_ms: int = 1000) -> bool:
+    candidates = [
+        page.locator("#auth-mfa-otpcode"),
+        page.locator("input[name='otpCode']"),
+        page.get_by_label(re.compile("enter code", re.I)),
+    ]
+
+    for locator in candidates:
+        try:
+            locator.first.wait_for(state="visible", timeout=timeout_ms)
+            return True
+        except (PlaywrightTimeoutError, PlaywrightError):
+            continue
+
+    return False
+
+
 def wait_for_manual_browser_otp(page, timeout_seconds: int) -> bool:
     print(
         f"[ACTION] Enter the 6-digit Amazon OTP in the browser within "
@@ -350,20 +367,49 @@ def select_seller_central_uk_account(page) -> None:
     ) from last_error
 
 
-def seller_central_account_switcher_is_visible(page) -> bool:
+def seller_central_account_switcher_is_visible(
+    page,
+    timeout_ms: int = 10000,
+) -> bool:
     try:
         page.get_by_text("Select an account", exact=True).first.wait_for(
             state="visible",
-            timeout=10000,
+            timeout=timeout_ms,
         )
         return True
     except PlaywrightTimeoutError:
         return False
 
 
+def seller_central_search_is_visible(page, timeout_ms: int = 3000) -> bool:
+    candidates = [
+        page.locator("#sc-search-field"),
+        page.locator("form#sc-global-search-form input[name='query']"),
+        page.locator("input.search-input[placeholder='Search']"),
+        page.get_by_placeholder("Search"),
+    ]
+
+    for locator in candidates:
+        try:
+            locator.first.wait_for(state="visible", timeout=timeout_ms)
+            return True
+        except (PlaywrightTimeoutError, PlaywrightError):
+            continue
+
+    return False
+
+
 def open_seller_central_home(page) -> None:
     page.goto("https://sellercentral.amazon.co.uk/home", wait_until="domcontentloaded")
     _wait_for_network_idle(page)
+
+
+def seller_central_home_is_ready(page) -> bool:
+    if seller_central_account_switcher_is_visible(page, timeout_ms=3000):
+        return True
+    if seller_central_search_is_visible(page):
+        return True
+    return False
 
 
 def load_cancelled_tracking_orders(path: Path) -> list[dict[str, str]]:
@@ -656,29 +702,54 @@ def run(config: Config) -> int:
             _log_step("Step 5: Entered Amazon password")
             click_amazon_sign_in_submit(page)
             _log_step("Step 6: Clicked Amazon Sign in submit button")
-            amazon_otp = amazon_otp_or_prompt(config)
-            if amazon_otp:
-                fill_amazon_otp(page, amazon_otp)
-                _log_step("Step 7: Entered Amazon OTP code")
-            elif not config.headless and wait_for_manual_browser_otp(
-                page,
-                OTP_INPUT_TIMEOUT_SECONDS,
-            ):
-                _log_step("Step 7: Confirmed Amazon OTP code was entered manually")
+
+            if amazon_otp_field_is_visible(page):
+                amazon_otp = amazon_otp_or_prompt(config)
+                if amazon_otp:
+                    fill_amazon_otp(page, amazon_otp)
+                    _log_step("Step 7: Entered Amazon OTP code")
+                elif not config.headless and wait_for_manual_browser_otp(
+                    page,
+                    OTP_INPUT_TIMEOUT_SECONDS,
+                ):
+                    _log_step("Step 7: Confirmed Amazon OTP code was entered manually")
+                else:
+                    print(
+                        "[OTP_REQUIRED] Step 7: Amazon OTP code is required. "
+                        "Enter the current authenticator code in the Streamlit modal."
+                    )
+                    return OTP_REQUIRED_RETURN_CODE
+
+                click_amazon_mfa_sign_in(page)
+                _log_step("Step 8: Clicked Amazon MFA Sign in button")
+
+                if amazon_otp_field_is_visible(page, timeout_ms=3000):
+                    print(
+                        "[OTP_REQUIRED] Step 8: Amazon OTP was not accepted or "
+                        "a fresh code is required. Enter the current authenticator "
+                        "code in the Streamlit modal."
+                    )
+                    return OTP_REQUIRED_RETURN_CODE
             else:
-                print(
-                    "[OTP_REQUIRED] Step 7: Amazon OTP code is required. "
-                    "Enter the current authenticator code in the Streamlit modal."
-                )
-                return OTP_REQUIRED_RETURN_CODE
-            click_amazon_mfa_sign_in(page)
-            _log_step("Step 8: Clicked Amazon MFA Sign in button")
+                _log_step("Step 7: Amazon OTP was not requested")
+
             if seller_central_account_switcher_is_visible(page):
                 select_seller_central_uk_account(page)
                 _log_step("Step 9: Selected My Beauty And Care United Kingdom account")
             else:
                 open_seller_central_home(page)
                 _log_step("Step 9: Opened Amazon Seller Central home")
+                if not seller_central_home_is_ready(page):
+                    if amazon_otp_field_is_visible(page, timeout_ms=3000):
+                        print(
+                            "[OTP_REQUIRED] Step 9: Amazon OTP is required before "
+                            "Seller Central search can continue. Enter the current "
+                            "authenticator code in the Streamlit modal."
+                        )
+                        return OTP_REQUIRED_RETURN_CODE
+                    raise RuntimeError(
+                        "Could not confirm Seller Central home loaded after login."
+                    )
             cancelled_orders = load_cancelled_tracking_orders(
                 CANCELLED_TRACKING_ORDERS_PATH
             )
