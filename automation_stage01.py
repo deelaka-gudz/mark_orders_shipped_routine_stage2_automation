@@ -510,9 +510,13 @@ def begin_rithum_browser_order_download(page: Page, config: Config) -> Path:
     )
     _wait_for_network_idle(page)
     _log_step("Step 1.6: Opened Rithum for Brands")
+    if close_rithum_for_brands_onboarding_if_visible(page):
+        _log_step("Step 1.6.1: Closed Rithum for Brands onboarding prompt")
 
     select_rithum_account(page, config.rithum_account_name)
     _log_step("Step 1.7: Selected Rithum account")
+    if close_rithum_for_brands_onboarding_if_visible(page):
+        _log_step("Step 1.7.1: Closed Rithum for Brands onboarding prompt")
     click_rithum_fulfill(page)
     _log_step("Step 1.8: Opened Fulfill section")
     click_rithum_orders(page)
@@ -532,6 +536,28 @@ def begin_rithum_browser_order_download(page: Page, config: Config) -> Path:
     return download_rithum_basic_layout_export(
         page, config.rithum_orders_output_path, config.rithum_email
     )
+
+
+def close_rithum_for_brands_onboarding_if_visible(page: Page) -> bool:
+    close_buttons = [
+        page.locator("[data-test='pendo-seller-onboarding-publish-step-1-close']"),
+        page.locator(
+            "[data-test='pendo-seller-onboarding-publish-step-1-container'] svg"
+        ),
+    ]
+
+    for button in close_buttons:
+        try:
+            target = button.first
+            target.wait_for(state="visible", timeout=3000)
+            target.click(timeout=5000)
+            _wait_for_network_idle(page)
+            page.wait_for_timeout(500)
+            return True
+        except (PlaywrightTimeoutError, PlaywrightError):
+            continue
+
+    return False
 
 
 def select_rithum_account(page: Page, account_name: str) -> None:
