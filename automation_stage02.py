@@ -1173,11 +1173,7 @@ def build_tracking_upload_template_rows(
             unmapped_services,
         )
 
-        if _is_cancelled_row(source_row):
-            upload_row["Tracking Number"] = "CANCELLED"
-            upload_row["Shipping Carrier Code"] = "CANCELLED"
-            upload_row["Shipping Class Code"] = "CANCELLED"
-        elif _is_international_row(source_row) or _needs_generated_evri_tracking_row(
+        if _is_cancelled_row(source_row) or _is_international_row(source_row) or _needs_generated_evri_tracking_row(
             source_row,
             upload_row,
         ):
