@@ -67,7 +67,9 @@ def _send_manual_intervention_alert(config: Any, remaining_count: int) -> None:
         msg["From"] = config.notify_from
         msg["To"] = ", ".join(_MANUAL_INTERVENTION_RECIPIENTS)
         msg.set_content(body)
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
             smtp.login(config.notify_from, config.notify_app_password)
             smtp.send_message(msg)
         print(
@@ -87,7 +89,9 @@ def _send_failure_email(config: Any, subject: str, body: str) -> None:
         msg["From"] = config.notify_from
         msg["To"] = ", ".join(_MANUAL_INTERVENTION_RECIPIENTS)
         msg.set_content(body)
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
             smtp.login(config.notify_from, config.notify_app_password)
             smtp.send_message(msg)
         print(
