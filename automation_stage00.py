@@ -17,6 +17,12 @@ from playwright.sync_api import sync_playwright
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 
+_MANUAL_INTERVENTION_RECIPIENTS = [
+    "deelaka@gudz.com",
+    "veer@gudz.com",
+    "supply@gudz.com",
+]
+
 
 def _env_flag(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -39,6 +45,37 @@ def _log_info(debug: bool, message: str) -> None:
 
 def _log_step(step: str) -> None:
     print(f"[DONE] {step}")
+
+
+def _send_manual_intervention_alert(config: Any, remaining_count: int) -> None:
+    if not (config.notify_from and config.notify_app_password):
+        print(
+            "[WARN] Cannot send manual intervention alert — SMTP credentials not configured."
+        )
+        return
+    subject = f"ACTION REQUIRED: {remaining_count} PreGen Failure order(s) need manual attention"
+    body = (
+        f"{remaining_count} PreGen Failure order(s) could not be resolved automatically "
+        "after all 4 passes.\n\n"
+        "Please log in to Helm and manually fix the remaining PreGen Failure orders before "
+        "running the Stage 1 and Stage 2 automation.\n\n"
+        "This is an automated alert from the Mark Orders Shipped automation."
+    )
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = config.notify_from
+        msg["To"] = ", ".join(_MANUAL_INTERVENTION_RECIPIENTS)
+        msg.set_content(body)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(config.notify_from, config.notify_app_password)
+            smtp.send_message(msg)
+        print(
+            f"[INFO] Manual intervention alert sent to: "
+            f"{', '.join(_MANUAL_INTERVENTION_RECIPIENTS)}"
+        )
+    except Exception as exc:
+        print(f"[WARN] Could not send manual intervention alert: {exc}")
 
 
 def _send_failure_email(config: Any, subject: str, body: str) -> None:
@@ -144,6 +181,7 @@ def _click_pregen_failure_if_count_greater_than_zero(page: Page) -> bool:
     pregen_failure_count = _status_count(page, "#status_id_3009")
     print(f"[INFO] PreGen Failure count after dashboard return: {pregen_failure_count}")
     if pregen_failure_count <= 0:
+        print("[INFO] PreGen Failure count is 0 — all failures resolved")
         return False
 
     _click_pregen_failure(page)
@@ -963,7 +1001,11 @@ def run(config: Config) -> int:
             )
             _log_step("Step 11: Check PreGen Failure count")
 
-            if final_pregen_failure_count > 0:
+            if final_pregen_failure_count == 0:
+                print(
+                    "[INFO] PreGen Failure count is 0 after Pass 1 — Stage 1 will now run"
+                )
+            elif final_pregen_failure_count > 0:
                 remaining_pregen_failure_count = _click_pregen_failure(page)
                 if remaining_pregen_failure_count <= 0:
                     return 0
@@ -986,9 +1028,18 @@ def run(config: Config) -> int:
                     f"[INFO] Filtered record count after Ship By Date filter: {filtered_count}"
                 )
                 if filtered_count == 0:
-                    print(
-                        "[INFO] No PreGen Failure orders match today's ship date — proceeding to Stage 1"
+                    total_failures = _verify_pregen_failure_count_greater_than_zero(
+                        page
                     )
+                    if total_failures > 0:
+                        print(
+                            f"[WARN] No PreGen Failure orders match today's ship date, "
+                            f"but {total_failures} PreGen Failure order(s) remain on the "
+                            "dashboard. Manual fix required — Stage 1 will not run."
+                        )
+                        _send_manual_intervention_alert(config, total_failures)
+                        return total_failures
+                    print("[INFO] PreGen Failure count is 0 — Stage 1 will now run")
                     return 0
 
                 _select_all_orders_on_page(page)
@@ -1058,9 +1109,18 @@ def run(config: Config) -> int:
                         f"[INFO] Filtered record count after Ship By Date filter: {filtered_count}"
                     )
                     if filtered_count == 0:
-                        print(
-                            "[INFO] No PreGen Failure orders match today's ship date — proceeding to Stage 1"
+                        total_failures = _verify_pregen_failure_count_greater_than_zero(
+                            page
                         )
+                        if total_failures > 0:
+                            print(
+                                f"[WARN] No PreGen Failure orders match today's ship date, "
+                                f"but {total_failures} PreGen Failure order(s) remain on the "
+                                "dashboard. Manual fix required — Stage 1 will not run."
+                            )
+                            _send_manual_intervention_alert(config, total_failures)
+                            return total_failures
+                        print("[INFO] PreGen Failure count is 0 — Stage 1 will now run")
                         return 0
 
                     _select_all_orders_on_page(page)
@@ -1152,8 +1212,10 @@ def run(config: Config) -> int:
                                 f"[WARN] Stage 0 finished with {remaining_count} unresolved "
                                 "PreGen Failure order(s). Stage 1 and Stage 2 will not run."
                             )
+                            _send_manual_intervention_alert(config, remaining_count)
                             return remaining_count
 
+            print("[INFO] PreGen Failure count is 0 — Stage 1 will now run")
             time.sleep(2)
             return 0
         except Exception as exc:
