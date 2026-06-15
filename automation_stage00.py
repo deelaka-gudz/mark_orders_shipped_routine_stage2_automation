@@ -209,7 +209,7 @@ def _process_pregen_failure_order(
     page: Page, order: dict[str, str], index: int, config: Any
 ) -> None:
     _open_order_link(page, order)
-    _log_step(f"Step 25[{index}]: Open order ID {order['order_id']}")
+    _log_step(f"Step 26[{index}]: Open order ID {order['order_id']}")
 
     if not _verify_pregen_label_error_exists(page):
         skip_msg = (
@@ -222,18 +222,18 @@ def _process_pregen_failure_order(
             f"PreGen Failure: Order {order['order_id']} skipped — no label error found",
             f"{skip_msg}\n\nThis order may be in an unexpected state. Please check it manually in Helm.",
         )
-        _log_step(f"Step 25.1[{index}]: Pregenerated Labels Plugin error not found")
+        _log_step(f"Step 26.1[{index}]: Pregenerated Labels Plugin error not found")
         return
-    _log_step(f"Step 25.1[{index}]: Verify Pregenerated Labels Plugin error")
+    _log_step(f"Step 26.1[{index}]: Verify Pregenerated Labels Plugin error")
 
     _select_royal_mail_tracked_48_with_signature(page)
-    _log_step(f"Step 25.2[{index}]: Select RoyalMail Tracked 48 With Signature")
+    _log_step(f"Step 26.2[{index}]: Select RoyalMail Tracked 48 With Signature")
 
     _click_visible_toggle_or_retry_shipping(page)
-    _log_step(f"Step 25.3[{index}]: Click visible toggle button")
+    _log_step(f"Step 26.3[{index}]: Click visible toggle button")
 
     _select_order_status_pregen(page)
-    _log_step(f"Step 25.4[{index}]: Select PreGen status")
+    _log_step(f"Step 26.4[{index}]: Select PreGen status")
 
 
 def _verify_pregen_label_error_exists(page: Page) -> bool:
@@ -418,6 +418,27 @@ def _fill_ship_by_date_today(page: Page) -> None:
     )
     print(f"[INFO] Ship By Date set to: {date_str}")
     page.wait_for_timeout(500)
+
+
+def _click_apply_filters(page: Page) -> None:
+    apply_btn = page.locator("button#apply-button")
+    apply_btn.first.wait_for(state="visible", timeout=10000)
+    apply_btn.first.click(timeout=5000)
+    page.wait_for_load_state("domcontentloaded")
+    _wait_for_network_idle(page)
+
+
+def _get_filtered_record_count(page: Page) -> int:
+    try:
+        span = page.locator("span.check-filtered.table-select-all")
+        span.first.wait_for(state="visible", timeout=10000)
+        text = span.first.inner_text(timeout=5000)
+        match = re.search(r"/\s*(\d+)\s*records", text)
+        if match:
+            return int(match.group(1))
+    except Exception:
+        pass
+    return 0
 
 
 def _select_all_orders_on_page(page: Page, force_reselect: bool = False) -> None:
@@ -957,64 +978,77 @@ def run(config: Config) -> int:
                 _fill_ship_by_date_today(page)
                 _log_step("Step 15: Fill Ship By Date with today's date")
 
+                _click_apply_filters(page)
+                _log_step("Step 16: Click Apply Filters button")
+
+                filtered_count = _get_filtered_record_count(page)
+                print(
+                    f"[INFO] Filtered record count after Ship By Date filter: {filtered_count}"
+                )
+                if filtered_count == 0:
+                    print(
+                        "[INFO] No PreGen Failure orders match today's ship date — proceeding to Stage 1"
+                    )
+                    return 0
+
                 _select_all_orders_on_page(page)
-                _log_step("Step 16: Click select all on page checkbox")
+                _log_step("Step 17: Click select all on page checkbox")
 
                 _open_bulk_action_dropdown(page)
-                _log_step("Step 17: Click Select Bulk Action")
+                _log_step("Step 18: Click Select Bulk Action")
 
                 _select_set_shipping_bulk_action(page)
-                _log_step("Step 18: Select Set Shipping")
+                _log_step("Step 19: Select Set Shipping")
 
                 _select_royal_mail_tracked_48_no_signature(page)
-                _log_step("Step 19: Select RoyalMailClickAndDrop RMCD Tracked 48")
+                _log_step("Step 20: Select RoyalMailClickAndDrop RMCD Tracked 48")
 
                 try:
                     _submit_bulk_action(page)
                 except Exception as exc:
-                    msg = f"Pass 2 (Step 20): Bulk action submission failed or timed out: {exc}"
+                    msg = f"Pass 2 (Step 21): Bulk action submission failed or timed out: {exc}"
                     print(f"[WARN] {msg}")
                     _send_failure_email(
                         config,
-                        "PreGen Failure: Bulk Submit Failed (Pass 2 Step 20)",
+                        "PreGen Failure: Bulk Submit Failed (Pass 2 Step 21)",
                         msg,
                     )
                     email_sent[0] = True
                     raise
-                _log_step("Step 20: Click Submit Action")
+                _log_step("Step 21: Click Submit Action")
 
                 _select_all_orders_on_page(page, force_reselect=True)
-                _log_step("Step 21: Click select all on page checkbox")
+                _log_step("Step 22: Click select all on page checkbox")
 
                 _set_status_as_pregen(page)
-                _log_step("Step 22: Click Set as PreGen")
+                _log_step("Step 23: Click Set as PreGen")
 
                 try:
                     _wait_for_pregen_count_zero(page)
                 except RuntimeError as exc:
-                    msg = f"Pass 2 (Step 23): Timed out waiting for PreGen queue to drain: {exc}"
+                    msg = f"Pass 2 (Step 24): Timed out waiting for PreGen queue to drain: {exc}"
                     print(f"[WARN] {msg}")
                     _send_failure_email(
-                        config, "PreGen Failure: Queue Timeout (Pass 2 Step 23)", msg
+                        config, "PreGen Failure: Queue Timeout (Pass 2 Step 24)", msg
                     )
                     email_sent[0] = True
                     raise
-                _log_step("Step 23: Wait until PreGen status count is 0")
+                _log_step("Step 24: Wait until PreGen status count is 0")
 
                 _click_dashboard_sidebar_link(page)
-                _log_step("Step 24: Click Dashboard sidebar link")
+                _log_step("Step 25: Click Dashboard sidebar link")
 
                 if _click_pregen_failure_if_count_greater_than_zero(page):
-                    _log_step("Step 25: Click Pregen failure")
+                    _log_step("Step 26: Click Pregen failure")
 
                     try:
                         orders = _collect_order_links(page)
                     except RuntimeError as exc:
-                        msg = f"Pass 3 (Step 26): Could not collect order links from the page: {exc}"
+                        msg = f"Pass 3 (Step 27): Could not collect order links from the page: {exc}"
                         print(f"[WARN] {msg}")
                         _send_failure_email(
                             config,
-                            "PreGen Failure: Cannot Collect Orders (Pass 3 Step 26)",
+                            "PreGen Failure: Cannot Collect Orders (Pass 3 Step 27)",
                             f"{msg}\n\nPlease open Helm and process the remaining PreGen Failure orders manually.",
                         )
                         orders = []
@@ -1023,7 +1057,7 @@ def run(config: Config) -> int:
                             _process_pregen_failure_order(page, order, index, config)
                         except Exception as order_exc:
                             msg = (
-                                f"Pass 3 (Step 26[{index}]): "
+                                f"Pass 3 (Step 27[{index}]): "
                                 f"Order {order['order_id']} failed: {order_exc}"
                             )
                             print(f"[WARN] {msg}")
@@ -1036,7 +1070,7 @@ def run(config: Config) -> int:
                     remaining_count = _check_remaining_pregen_failure_orders(
                         page, config
                     )
-                    _log_step("Step 26.5: Check remaining PreGen Failure orders")
+                    _log_step("Step 27.5: Check remaining PreGen Failure orders")
                     if remaining_count > 0:
                         print(
                             f"[WARN] Stage 0 finished with {remaining_count} unresolved "
