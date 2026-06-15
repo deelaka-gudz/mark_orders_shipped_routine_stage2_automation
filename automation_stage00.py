@@ -79,18 +79,21 @@ def _send_manual_intervention_alert(config: Any, remaining_count: int) -> None:
 
 
 def _send_failure_email(config: Any, subject: str, body: str) -> None:
-    if not (config.notify_from and config.notify_to and config.notify_app_password):
+    if not (config.notify_from and config.notify_app_password):
         return
     try:
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = config.notify_from
-        msg["To"] = config.notify_to
+        msg["To"] = ", ".join(_MANUAL_INTERVENTION_RECIPIENTS)
         msg.set_content(body)
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
             smtp.login(config.notify_from, config.notify_app_password)
             smtp.send_message(msg)
-        print(f"[INFO] Failure notification sent to {config.notify_to}")
+        print(
+            f"[INFO] Failure notification sent to: "
+            f"{', '.join(_MANUAL_INTERVENTION_RECIPIENTS)}"
+        )
     except Exception as exc:
         print(f"[WARN] Could not send notification email: {exc}")
 
@@ -900,7 +903,6 @@ class Config:
     headless: bool
     debug: bool
     notify_from: Optional[str]
-    notify_to: Optional[str]
     notify_app_password: Optional[str]
 
     @staticmethod
@@ -918,7 +920,6 @@ class Config:
             ),
             debug=_env_flag("DEBUG", default=False),
             notify_from=os.getenv("NOTIFY_EMAIL_FROM", "").strip() or None,
-            notify_to=os.getenv("NOTIFY_EMAIL_TO", "").strip() or None,
             notify_app_password=os.getenv("NOTIFY_EMAIL_APP_PASSWORD", "").strip()
             or None,
         )

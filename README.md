@@ -319,11 +319,10 @@ Create a `.env` file in the repo root. Use `.env.example` as the template.
 | `AMAZON_PASSWORD`           | Yes      | Stage 2       | Amazon Seller Central login password                           |
 | `HEADLESS`                  | No       | Stage 0, 1, 2 | Set `true` to run browsers without a window (default: `false`) |
 | `DEBUG`                     | No       | Stage 0, 1, 2 | Set `true` for verbose `[INFO]` logging (default: `false`)     |
-| `NOTIFY_EMAIL_FROM`         | No       | Stage 0       | Gmail address used to send failure/intervention alerts         |
-| `NOTIFY_EMAIL_TO`           | No       | Stage 0       | Recipient for general Stage 0 failure alerts                   |
+| `NOTIFY_EMAIL_FROM`         | No       | Stage 0       | Gmail address used as the sender for all Stage 0 alerts        |
 | `NOTIFY_EMAIL_APP_PASSWORD` | No       | Stage 0       | Gmail App Password for SMTP auth                               |
 
-`NOTIFY_EMAIL_FROM`, `NOTIFY_EMAIL_TO`, and `NOTIFY_EMAIL_APP_PASSWORD` are optional. If absent, Stage 0 skips all email sending silently. The manual intervention alert (sent when failures remain after all 4 passes) always goes to `deelaka@gudz.com`, `veer@gudz.com`, and `supply@gudz.com` using `NOTIFY_EMAIL_FROM` and `NOTIFY_EMAIL_APP_PASSWORD` for auth.
+`NOTIFY_EMAIL_FROM` and `NOTIFY_EMAIL_APP_PASSWORD` are optional. If absent, Stage 0 skips all email sending silently. All Stage 0 emails — both mid-run operational errors and the manual intervention alert — are sent to `deelaka@gudz.com`, `veer@gudz.com`, and `supply@gudz.com`. There is no separate `NOTIFY_EMAIL_TO` variable; the recipients are hardcoded.
 
 ## Run
 
