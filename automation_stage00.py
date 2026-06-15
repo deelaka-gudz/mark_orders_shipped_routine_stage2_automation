@@ -1038,13 +1038,12 @@ def run(config: Config) -> int:
                     )
                     if total_failures > 0:
                         print(
-                            f"[WARN] No PreGen Failure orders match today's ship date, "
-                            f"but {total_failures} PreGen Failure order(s) remain on the "
-                            "dashboard. Manual fix required — Stage 1 will not run."
+                            f"[WARN] {total_failures} PreGen Failure order(s) remain on "
+                            "the dashboard but none match today's ship date — "
+                            "Stage 1 will now run."
                         )
-                        _send_manual_intervention_alert(config, total_failures)
-                        return total_failures
-                    print("[INFO] PreGen Failure count is 0 — Stage 1 will now run")
+                    else:
+                        print("[INFO] PreGen Failure count is 0 — Stage 1 will now run")
                     return 0
 
                 _select_all_orders_on_page(page)
@@ -1119,13 +1118,14 @@ def run(config: Config) -> int:
                         )
                         if total_failures > 0:
                             print(
-                                f"[WARN] No PreGen Failure orders match today's ship date, "
-                                f"but {total_failures} PreGen Failure order(s) remain on the "
-                                "dashboard. Manual fix required — Stage 1 will not run."
+                                f"[WARN] {total_failures} PreGen Failure order(s) remain on "
+                                "the dashboard but none match today's ship date — "
+                                "Stage 1 will now run."
                             )
-                            _send_manual_intervention_alert(config, total_failures)
-                            return total_failures
-                        print("[INFO] PreGen Failure count is 0 — Stage 1 will now run")
+                        else:
+                            print(
+                                "[INFO] PreGen Failure count is 0 — Stage 1 will now run"
+                            )
                         return 0
 
                     _select_all_orders_on_page(page)
