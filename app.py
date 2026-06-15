@@ -18,6 +18,7 @@ FINAL_OUTPUT_PATH = DOWNLOADS_DIR / "tracking_upload_template.txt"
 UNMAPPED_COURIERS_PATH = DOWNLOADS_DIR / "unmapped_courier_services.csv"
 
 STAGE_SCRIPTS = [
+    ("Stage 0", ROOT / "automation_stage00.py"),
     ("Stage 1", ROOT / "automation_stage01.py"),
     ("Stage 2", ROOT / "automation_stage02.py"),
 ]
