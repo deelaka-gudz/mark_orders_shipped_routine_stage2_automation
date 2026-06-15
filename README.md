@@ -6,10 +6,16 @@ Manual process reference:
 
 https://scribehow.com/viewer/How_To_Process_And_Filter_Shipping_Report_Export_Data__yzCBrf8XQ1mNQiWUOE8N8g
 
-This repo is being built step by step from the process guide. The current flow is split into two scripts:
+The workflow runs three scripts in sequence. Stage 0 must complete cleanly before Stage 1 and Stage 2 are allowed to run.
 
-1. `automation_stage01.py`: downloads/matches the Rithum order export against the Helm/DC Shipping Report.
-2. `automation_stage02.py`: downloads the Helm Full Orders Report and prepares the final tracking-upload data in memory.
+## Pipeline Overview
+
+```text
+Stage 0 (automation_stage00.py)
+    ├─ 0 PreGen Failure orders → exit 0 → Stage 1 → Stage 2
+    ├─ All failures resolved by passes → exit 0 → Stage 1 → Stage 2
+    └─ Failures remain after all 4 passes → exit 1 → email sent → STOP
+```
 
 ## What Rithum/ChannelAdvisor Does
 
@@ -17,17 +23,96 @@ Rithum, formerly ChannelAdvisor, is the ecommerce platform that provides the ord
 
 In the full workflow there are two input files:
 
-- Rithum/ChannelAdvisor order export from email, FTP, or API.
+- Rithum/ChannelAdvisor order export fetched via the CA API.
 - Helm/DC shipping report containing the real tracking numbers.
 
-`automation_stage01.py` downloads or reads the Rithum order data first, then requests the Helm/DC shipping report.
+`automation_stage01.py` fetches Rithum order data via the CA API first, then requests the Helm/DC shipping report. The CA API response is converted to Basic Layout column format (`DD/MM/YYYY HH:MM` dates, human-readable column names matching the Rithum UI export) before saving to `downloads/rithum_orders.csv`.
+
+## Stage 0
+
+`automation_stage00.py` clears all PreGen Failure orders in Helm before Stage 1 and Stage 2 are allowed to run. It uses four progressively targeted passes.
+
+### 4-Pass Logic
+
+**Pass 1 (Steps 2–10): Bulk Evri 24 Non POD**
+
+1. Click the PreGen Failure dashboard tile.
+2. Select all orders on the page.
+3. Bulk action → Set Shipping → EvriCorporate Evri 24 Non POD.
+4. Submit bulk action.
+5. Set all orders to PreGen status (3003) to re-trigger label generation.
+6. Poll dashboard until PreGen count reaches 0 (30-min timeout).
+7. Check remaining PreGen Failure count.
+
+**Pass 2 (Steps 12–24): Bulk Royal Mail Tracked 48 No Signature (date-filtered)**
+
+Only runs if Pass 1 left failures:
+
+1. Click PreGen Failure tile.
+2. Open the Filters panel.
+3. Expand the Ship By Date filter.
+4. Fill Ship By Date with today's date.
+5. Click Apply Filters.
+6. Check filtered record count — if 0, verify total dashboard count:
+   - Total = 0 → Stage 1 runs.
+   - Total > 0 → email sent to intervention recipients → Stage 1 blocked.
+7. Select all filtered orders.
+8. Bulk action → Set Shipping → RoyalMailClickAndDrop RMCD Tracked 48 No Signature.
+9. Submit bulk action.
+10. Set all orders to PreGen status (3003).
+11. Poll dashboard until PreGen count reaches 0.
+
+**Pass 3 (Steps 26–38): Repeat of Pass 2**
+
+Only runs if Pass 2 left failures. Identical bulk flow with the same date filter and Royal Mail No Signature option.
+
+**Pass 4 (Steps 40–41.5): Per-order Royal Mail Tracked 48 With Signature**
+
+Only runs if Pass 3 left failures:
+
+1. Collect all remaining PreGen Failure order links.
+2. For each order:
+   - Verify the Pregenerated Labels Plugin error is visible.
+   - Select RoyalMailClickAndDrop RMCD Tracked 48 With Signature.
+   - Click the On/Off toggle to re-trigger label generation.
+   - Set status to PreGen (3003).
+3. Check final dashboard count.
+   - Count = 0 → Stage 1 runs.
+   - Count > 0 → `[WARN]` logged, email sent to intervention recipients → Stage 1 blocked (exit code 1).
+
+### Exit Behaviour
+
+| Outcome                               | Exit code | Stage 1     |
+| ------------------------------------- | --------- | ----------- |
+| 0 PreGen Failures from the start      | 0         | Runs        |
+| All failures resolved during any pass | 0         | Runs        |
+| Failures remain after all 4 passes    | 1         | **Blocked** |
+
+### Manual Intervention Email
+
+When Stage 0 exits with code 1, an email is sent to:
+
+- `deelaka@gudz.com`
+- `veer@gudz.com`
+- `supply@gudz.com`
+
+Subject: `ACTION REQUIRED: X PreGen Failure order(s) need manual attention`
+
+The email asks the recipient to log in to Helm, manually resolve the remaining PreGen Failure orders, and then re-run the automation.
+
+### Key Helm Status IDs
+
+| ID                | Status                     |
+| ----------------- | -------------------------- |
+| `#status_id_3009` | PreGen Failure (problem)   |
+| `#status_id_3003` | PreGen (re-trigger target) |
 
 ## Stage 1
 
 `automation_stage01.py` handles the first spreadsheet-cleaning section:
 
 1. Log in to Helm.
-2. Optionally download Rithum/ChannelAdvisor orders through the API.
+2. Fetch Rithum/ChannelAdvisor orders via the CA API and save as Basic Layout format.
 3. Download the Helm/DC Shipping Report.
 4. Match order rows to DC shipping rows using the configured order ID columns.
 5. Add DC output fields:
@@ -222,13 +307,34 @@ python -m playwright install
 
 Create a `.env` file in the repo root. Use `.env.example` as the template.
 
+| Variable                    | Required | Used by       | Description                                                    |
+| --------------------------- | -------- | ------------- | -------------------------------------------------------------- |
+| `HELM_EMAIL`                | Yes      | Stage 0, 1, 2 | Helm login email                                               |
+| `HELM_PASSWORD`             | Yes      | Stage 0, 1, 2 | Helm login password                                            |
+| `CA_APPLICATION_ID`         | Yes      | Stage 1       | ChannelAdvisor API app ID                                      |
+| `CA_SHARED_SECRET`          | Yes      | Stage 1       | ChannelAdvisor API shared secret                               |
+| `CA_REFRESH_TOKEN`          | Yes      | Stage 1       | ChannelAdvisor OAuth2 refresh token                            |
+| `CA_PROFILE_ID`             | Yes      | Stage 1       | ChannelAdvisor profile ID                                      |
+| `AMAZON_EMAIL`              | Yes      | Stage 2       | Amazon Seller Central login email                              |
+| `AMAZON_PASSWORD`           | Yes      | Stage 2       | Amazon Seller Central login password                           |
+| `HEADLESS`                  | No       | Stage 0, 1, 2 | Set `true` to run browsers without a window (default: `false`) |
+| `DEBUG`                     | No       | Stage 0, 1, 2 | Set `true` for verbose `[INFO]` logging (default: `false`)     |
+| `NOTIFY_EMAIL_FROM`         | No       | Stage 0       | Gmail address used to send failure/intervention alerts         |
+| `NOTIFY_EMAIL_TO`           | No       | Stage 0       | Recipient for general Stage 0 failure alerts                   |
+| `NOTIFY_EMAIL_APP_PASSWORD` | No       | Stage 0       | Gmail App Password for SMTP auth                               |
+
+`NOTIFY_EMAIL_FROM`, `NOTIFY_EMAIL_TO`, and `NOTIFY_EMAIL_APP_PASSWORD` are optional. If absent, Stage 0 skips all email sending silently. The manual intervention alert (sent when failures remain after all 4 passes) always goes to `deelaka@gudz.com`, `veer@gudz.com`, and `supply@gudz.com` using `NOTIFY_EMAIL_FROM` and `NOTIFY_EMAIL_APP_PASSWORD` for auth.
+
 ## Run
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
+python automation_stage00.py
 python automation_stage01.py
 python automation_stage02.py
 ```
+
+If Stage 0 exits with a non-zero code (unresolved PreGen Failures), do not run Stage 1 or Stage 2 until the failures are manually resolved in Helm.
 
 The scripts print completed steps as they run. Rithum orders are saved to `downloads/rithum_orders.csv` by default. Helm report downloads are saved to `downloads/` by default.
 
@@ -241,7 +347,7 @@ The scripts can also be run from a local Streamlit dashboard:
 streamlit run app.py --server.headless true --server.port 8201
 ```
 
-The dashboard provides one button to run Stage 1 and then Stage 2 with the same Python environment. It streams the script logs, shows the current stage, current step, uptime, generated files, and download buttons for the final tab-delimited tracking upload handoff and unmapped courier review file.
+The dashboard runs Stage 0, Stage 1, and Stage 2 in sequence with a single button. If Stage 0 exits with a non-zero code, Stage 1 and Stage 2 are automatically skipped. The dashboard streams all script logs, shows the current stage, current step, uptime, generated files, and download buttons for the final tab-delimited tracking upload handoff and unmapped courier review file.
 
 Runs launched from the dashboard force `AUTOMATION_HEADLESS=true`, so Playwright runs without opening the browser window even if `.env` has `HEADLESS=false`.
 
@@ -249,9 +355,10 @@ The dashboard still respects the upload pause. It only generates `downloads/trac
 
 ## Current Script Map
 
-- `automation_stage01.py`: Helm login, Shipping Report download, Rithum/order matching, non-GB review outputs.
+- `automation_stage00.py`: Helm login, PreGen Failure detection, 4-pass bulk and per-order fix, manual intervention email if failures persist.
+- `automation_stage01.py`: Helm login, CA API order fetch (Basic Layout format), Shipping Report download, Rithum/order matching, non-GB review outputs.
 - `automation_stage02.py`: Full Orders Report download, Stage 2 matching, cancelled/despatch-ready handling, full Stage 1 merge, and tab-delimited tracking upload preparation.
-- `app.py`: local operator dashboard for running both automation stages and downloading the generated handoff file.
+- `app.py`: local operator dashboard for running all three automation stages and downloading the generated handoff file.
 
 ## Next Stages
 
