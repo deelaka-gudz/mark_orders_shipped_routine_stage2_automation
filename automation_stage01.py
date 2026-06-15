@@ -1142,43 +1142,6 @@ def _click_latest_shipping_report_download(
 _CA_TOKEN_URL = "https://api.channeladvisor.com/oauth2/token"
 _CA_ORDERS_URL = "https://api.channeladvisor.com/v1/Orders"
 
-_CA_ORDER_SCALAR_FIELDS: list[str] = [
-    "ID",
-    "ProfileID",
-    "SiteID",
-    "SiteName",
-    "SiteOrderID",
-    "SecondarySiteOrderID",
-    "SellerOrderID",
-    "OrderStatus",
-    "PaymentStatus",
-    "ShippingStatus",
-    "CheckoutStatus",
-    "TotalPrice",
-    "ShippingCost",
-    "TaxAmount",
-    "BuyerEmailAddress",
-    "BuyerUserId",
-    "ShippingTitle",
-    "ShippingFirstName",
-    "ShippingLastName",
-    "ShippingAddressLine1",
-    "ShippingAddressLine2",
-    "ShippingCity",
-    "ShippingStateOrProvince",
-    "ShippingPostalCode",
-    "ShippingCountry",
-    "ShippingPhoneNumber",
-    "EstimatedShipDateUtc",
-    "DeliverByDateUtc",
-    "CheckoutDateUtc",
-    "CreatedDateUtc",
-    "ImportDateUtc",
-    "RequestedShippingCarrier",
-    "RequestedShippingClass",
-    "Currency",
-]
-
 
 def _ca_get_access_token(
     application_id: str, shared_secret: str, refresh_token: str
@@ -1226,15 +1189,52 @@ def _ca_fetch_orders_page(
     return response.json().get("value", [])
 
 
+def _utc_to_basic_layout_datetime(value: Any) -> str:
+    """Convert a CA API UTC timestamp to 'DD/MM/YYYY HH:MM' (Basic Layout format)."""
+    if not value:
+        return ""
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            dt = datetime.datetime.strptime(text, fmt)
+            return dt.strftime("%d/%m/%Y %H:%M")
+        except ValueError:
+            continue
+    return text
+
+
 def _ca_order_to_csv_row(order: dict[str, Any]) -> dict[str, Any]:
-    row: dict[str, Any] = {}
-    for field_name in _CA_ORDER_SCALAR_FIELDS:
-        value = order.get(field_name)
-        if value is not None:
-            row[field_name] = value
-    if "SiteOrderID" in row:
-        row["Site Order ID"] = row["SiteOrderID"]
-    return row
+    order_id = str(order.get("SiteOrderID") or "").strip()
+    candidates: dict[str, Any] = {
+        # Basic Layout column names — matches what Stage 2 reads
+        "Site Order ID": order_id,
+        "Site Name": order.get("SiteName"),
+        "Buyer": order.get("BuyerEmailAddress"),
+        "Order Date": _utc_to_basic_layout_datetime(order.get("CheckoutDateUtc")),
+        "Estimated Ship Date": _utc_to_basic_layout_datetime(
+            order.get("EstimatedShipDateUtc")
+        ),
+        "Shipping Status": order.get("ShippingStatus"),
+        "Site Shipping Status": order.get("ShippingStatus"),
+        "Order Total": order.get("TotalPrice"),
+        "Payment Type": order.get("PaymentStatus"),
+        "Shipping First Name": order.get("ShippingFirstName"),
+        "Shipping Last Name": order.get("ShippingLastName"),
+        "Shipping Company Name": order.get("ShippingTitle"),
+        "Shipping Address Line 1": order.get("ShippingAddressLine1"),
+        "Shipping Address Line 2": order.get("ShippingAddressLine2"),
+        "Shipping City": order.get("ShippingCity"),
+        "Shipping State or Province": order.get("ShippingStateOrProvince"),
+        "Shipping Postal Code": order.get("ShippingPostalCode"),
+        "Shipping Country": order.get("ShippingCountry"),
+        "Shipping Day Phone": order.get("ShippingPhoneNumber"),
+        # Technical fields kept for downstream processing
+        "SiteOrderID": order_id,
+        "RequestedShippingCarrier": order.get("RequestedShippingCarrier"),
+        "RequestedShippingClass": order.get("RequestedShippingClass"),
+        "SecondarySiteOrderID": order.get("SecondarySiteOrderID"),
+    }
+    return {k: v for k, v in candidates.items() if v is not None and v != ""}
 
 
 def fetch_rithum_orders_via_api(config: Config) -> Path:
