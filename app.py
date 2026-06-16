@@ -22,6 +22,7 @@ STAGE_SCRIPTS = [
     ("Stage 1", ROOT / "automation_stage01.py"),
     ("Stage 2", ROOT / "automation_stage02.py"),
 ]
+NO_RITHUM_ORDERS_EXIT_CODE = 10
 
 LOG_PREFIX_RE = re.compile(r"^\[(?P<level>[A-Z]+)\]\s*(?P<message>.*)$")
 STEP_RE = re.compile(r"(Step\s+[0-9]+(?:\.[0-9]+)*[^:]*)")
@@ -145,6 +146,11 @@ def run_stage(
     if return_code == 0:
         stage_status.success(
             f"{stage_name} completed in {format_duration(elapsed_seconds)}"
+        )
+    elif stage_name == "Stage 1" and return_code == NO_RITHUM_ORDERS_EXIT_CODE:
+        stage_status.warning(
+            f"{stage_name} found no CA/Rithum orders in "
+            f"{format_duration(elapsed_seconds)}"
         )
     else:
         stage_status.error(
@@ -391,6 +397,15 @@ def main() -> None:
                     log_box,
                 )
                 results.append(result)
+                if (
+                    stage_name == "Stage 1"
+                    and result.return_code == NO_RITHUM_ORDERS_EXIT_CODE
+                ):
+                    workflow_status.warning(
+                        "Stopped after Stage 1 because there are 0 CA/Rithum "
+                        "orders to process today. Stage 2 was skipped."
+                    )
+                    break
                 if result.return_code != 0:
                     workflow_status.error(f"Stopped because {stage_name} failed.")
                     break
@@ -414,7 +429,15 @@ def main() -> None:
         with run_summary_slot.container():
             with st.expander("Run Summary", expanded=True):
                 for result in results:
-                    status = "completed" if result.return_code == 0 else "failed"
+                    if result.return_code == 0:
+                        status = "completed"
+                    elif (
+                        result.name == "Stage 1"
+                        and result.return_code == NO_RITHUM_ORDERS_EXIT_CODE
+                    ):
+                        status = "no CA/Rithum orders; remaining stages skipped"
+                    else:
+                        status = "failed"
                     st.write(
                         f"{result.name}: {status} in "
                         f"{format_duration(result.elapsed_seconds)}"

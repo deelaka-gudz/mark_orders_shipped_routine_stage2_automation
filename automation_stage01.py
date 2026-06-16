@@ -2,6 +2,7 @@ import csv
 import datetime
 import os
 import re
+import sys
 import time
 
 import requests
@@ -17,6 +18,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
+NO_RITHUM_ORDERS_EXIT_CODE = 10
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -1298,7 +1300,7 @@ def fetch_rithum_orders_via_api(config: Config) -> Path:
     return output_path
 
 
-def run(config: Config) -> None:
+def run(config: Config) -> int:
     _log_info(config.debug, f"Loaded .env from: {DOTENV_PATH}")
     _log_info(config.debug, f"HELM_URL: {config.helm_url}")
     _log_info(config.debug, f"Download directory: {config.download_dir}")
@@ -1316,8 +1318,13 @@ def run(config: Config) -> None:
                 sum(1 for _ in open(rithum_orders_path, encoding="utf-8-sig")) - 1
             )
             if rithum_row_count <= 0:
-                _log_step("Step 1 result: 0 orders to process — nothing to do today.")
-                return
+                _log_step("Step 1 result: 0 CA/Rithum orders to process today.")
+                print(
+                    "[WARN] Stage 1 stopped before Helm Shipping Report download "
+                    "because the CA/Rithum order export has 0 rows. Stage 2 should "
+                    "not run for this automation cycle."
+                )
+                return NO_RITHUM_ORDERS_EXIT_CODE
             login = LoginFlow(page, config)
             login.open()
             login.fill_credentials()
@@ -1337,6 +1344,7 @@ def run(config: Config) -> None:
                 _log_step(f"Matched output available at {matched_path}")
 
             time.sleep(2)
+            return 0
         finally:
             try:
                 context.close()
@@ -1345,4 +1353,4 @@ def run(config: Config) -> None:
 
 
 if __name__ == "__main__":
-    run(Config.load())
+    sys.exit(run(Config.load()))
