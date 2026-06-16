@@ -2,6 +2,7 @@ import csv
 import json
 import os
 import re
+import shutil
 import smtplib
 import time
 from dataclasses import dataclass
@@ -25,6 +26,21 @@ from automation_stage01 import (
 )
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
+
+_TRACKING_UPLOAD_EXPORT_DIR = Path(
+    r"S:\Excel Automatic\CA Tracking Update\Mark Shipped Automation"
+)
+
+
+def _copy_tracking_upload_to_export(source_path: Path) -> None:
+    try:
+        _TRACKING_UPLOAD_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        dest = _TRACKING_UPLOAD_EXPORT_DIR / source_path.name
+        shutil.copy2(source_path, dest)
+        print(f"[DONE] Copied tracking upload file to: {dest}")
+    except Exception as exc:
+        print(f"[WARN] Could not copy tracking upload file to export location: {exc}")
+
 
 _NOTIFICATION_RECIPIENTS = [
     "supply@gudz.com",
@@ -1591,7 +1607,8 @@ def run_stage2_steps(page: Page, config: Config) -> None:
     if matched_path:
         _log_step(f"Stage 2 output available at {matched_path}")
 
-    _log_step("Stage 2: Ready for next instructions")
+    _copy_tracking_upload_to_export(config.tracking_upload_output_path)
+    _log_step("Automation completed successfully")
 
 
 def run(config: Config) -> None:
