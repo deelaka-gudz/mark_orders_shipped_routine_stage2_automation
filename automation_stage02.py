@@ -2,8 +2,10 @@ import csv
 import json
 import os
 import re
+import smtplib
 import time
 from dataclasses import dataclass
+from email.message import EmailMessage
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -23,6 +25,42 @@ from automation_stage01 import (
 )
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
+
+_NOTIFICATION_RECIPIENTS = [
+    "supply@gudz.com",
+    "veer@gudz.com",
+    "deelaka@gudz.com",
+    "chamike@gudz.com",
+    "lavanga@gudz.com",
+]
+
+
+def _send_completion_email() -> None:
+    notify_from = os.getenv("NOTIFY_EMAIL_FROM", "")
+    notify_password = os.getenv("NOTIFY_EMAIL_APP_PASSWORD", "")
+    if not (notify_from and notify_password):
+        return
+    subject = "All Stages Completed Successfully — Mark Orders Shipped"
+    body = (
+        "All 3 stages of the Mark Orders Shipped automation completed successfully.\n\n"
+        "The tracking upload handoff file is ready in the downloads folder.\n\n"
+        "This is an automated notification from the Mark Orders Shipped automation."
+    )
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = notify_from
+        msg["To"] = ", ".join(_NOTIFICATION_RECIPIENTS)
+        msg.set_content(body)
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(notify_from, notify_password)
+            smtp.send_message(msg)
+        print(f"[INFO] Completion email sent to: {', '.join(_NOTIFICATION_RECIPIENTS)}")
+    except Exception as exc:
+        print(f"[WARN] Could not send completion email: {exc}")
+
 
 TRACKING_UPLOAD_TEMPLATE_COLUMNS = [
     "Invoice No",
@@ -1173,9 +1211,13 @@ def build_tracking_upload_template_rows(
             unmapped_services,
         )
 
-        if _is_cancelled_row(source_row) or _is_international_row(source_row) or _needs_generated_evri_tracking_row(
-            source_row,
-            upload_row,
+        if (
+            _is_cancelled_row(source_row)
+            or _is_international_row(source_row)
+            or _needs_generated_evri_tracking_row(
+                source_row,
+                upload_row,
+            )
         ):
             upload_row["Shipping Carrier Code"] = "Evri"
             upload_row["Shipping Class Code"] = "EVRI 24"
@@ -1572,6 +1614,7 @@ def run(config: Config) -> None:
             _log_step("Step 1: Login to Helm")
 
             run_stage2_steps(page, config)
+            _send_completion_email()
 
             time.sleep(2)
         finally:

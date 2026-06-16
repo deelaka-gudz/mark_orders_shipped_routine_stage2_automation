@@ -92,9 +92,11 @@ Only runs if Pass 3 left failures:
 
 When Stage 0 exits with code 1, an email is sent to:
 
-- `deelaka@gudz.com`
-- `veer@gudz.com`
 - `supply@gudz.com`
+- `veer@gudz.com`
+- `deelaka@gudz.com`
+- `chamike@gudz.com`
+- `lavanga@gudz.com`
 
 Subject: `ACTION REQUIRED: X PreGen Failure order(s) need manual attention`
 

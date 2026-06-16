@@ -18,9 +18,11 @@ from playwright.sync_api import sync_playwright
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 
 _MANUAL_INTERVENTION_RECIPIENTS = [
-    "deelaka@gudz.com",
-    "veer@gudz.com",
     "supply@gudz.com",
+    "veer@gudz.com",
+    "deelaka@gudz.com",
+    "chamike@gudz.com",
+    "lavanga@gudz.com",
 ]
 
 
