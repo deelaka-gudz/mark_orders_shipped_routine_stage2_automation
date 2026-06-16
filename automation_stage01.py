@@ -1259,10 +1259,11 @@ def fetch_rithum_orders_via_api(config: Config) -> Path:
     _log_step("Step 1.2: CA API access token obtained")
 
     today = datetime.date.today()
-    day_after_tomorrow = today + datetime.timedelta(days=2)
+    tomorrow = today + datetime.timedelta(days=1)
     filter_expr = (
         config.ca_order_filter
-        + f" and EstimatedShipDateUtc lt {day_after_tomorrow.isoformat()}T00:00:00Z"
+        + f" and EstimatedShipDateUtc ge {today.isoformat()}T00:00:00Z"
+        + f" and EstimatedShipDateUtc lt {tomorrow.isoformat()}T00:00:00Z"
     )
     _log_info(config.debug, f"CA API order filter: {filter_expr}")
 

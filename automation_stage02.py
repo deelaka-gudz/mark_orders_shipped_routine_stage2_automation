@@ -1239,9 +1239,12 @@ def build_tracking_upload_template_rows(
             unmapped_services,
         )
 
-        if (
+        if _is_international_row(source_row):
+            if not _has_real_tracking_number(upload_row):
+                upload_row["Shipping Carrier Code"] = "Royal Mail"
+                upload_row["Shipping Class Code"] = "Airmail"
+        elif (
             _is_cancelled_row(source_row)
-            or _is_international_row(source_row)
             or _needs_generated_evri_tracking_row(
                 source_row,
                 upload_row,
@@ -1407,6 +1410,11 @@ def _needs_generated_evri_tracking_row(
         "despatched",
         "despatch ready",
     }
+
+
+def _has_real_tracking_number(row: dict[str, str]) -> bool:
+    tracking_number = str(row.get("Tracking Number", "") or "").strip().upper()
+    return tracking_number not in {"", "#N/A", "N/A", "AIRMAIL", "CANCELLED"}
 
 
 def _row_status(row: dict[str, str]) -> str:
