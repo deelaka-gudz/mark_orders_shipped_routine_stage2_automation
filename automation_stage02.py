@@ -28,7 +28,7 @@ from automation_stage01 import (
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 
 _TRACKING_UPLOAD_EXPORT_DIR = Path(
-    r"S:\Excel Automatic\CA Tracking Update\Mark Shipped Automation"
+    r"S:\Excel Automatic\CA Tracking Update\Mark Shipped Automation - Deelaka Testing"
 )
 
 
@@ -633,6 +633,18 @@ def match_stage1_unmatched_rows_to_full_orders(
     _log_step("Step 4: Read Full Orders Report and Stage 1 unmatched rows")
     unmatched_rows = _read_csv(config.non_gb_unmatched_output_path)
     full_order_rows = _read_csv(full_orders_path)
+    full_orders_key_column = _resolve_column(
+        full_order_rows[0] if full_order_rows else {},
+        config.full_orders_report_key_column,
+        [
+            "Channel Order ID",
+            "Channel Alt ID",
+            "Order Channel Alt. ID",
+            "SiteOrderID",
+            "Order ID",
+        ],
+        "Orders export",
+    )
     _log_step(
         f"Step 5: Loaded {len(unmatched_rows)} rows with #N/A from previous steps"
     )
