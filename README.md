@@ -352,6 +352,58 @@ Runs launched from the dashboard force `AUTOMATION_HEADLESS=true`, so Playwright
 
 The dashboard still respects the upload pause. It only generates `downloads/tracking_upload_template.txt`; it does not upload to Rithum/ChannelAdvisor or FTP.
 
+## Exposing the Dashboard Publicly with ngrok
+
+ngrok creates a public HTTPS tunnel to the local Streamlit server so team members can access the dashboard remotely without VPN.
+
+### One-time setup
+
+Install ngrok (already available if winget is installed):
+
+```powershell
+winget install ngrok.ngrok
+```
+
+After installing, open a new terminal so the PATH is refreshed, then add your auth token from [dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken):
+
+```powershell
+ngrok config add-authtoken <your-authtoken>
+```
+
+The token is saved to `%LOCALAPPDATA%\ngrok\ngrok.yml` and only needs to be set once.
+
+### Starting the tunnel
+
+Keep Streamlit running in one terminal, then open a second terminal and run:
+
+```powershell
+ngrok http 8501
+```
+
+ngrok prints a public URL:
+
+```
+Forwarding  https://xxxx-xxxx.ngrok-free.app -> http://localhost:8501
+```
+
+Share the `https://...ngrok-free.app` URL with anyone who needs access. The tunnel stays live as long as both processes are running.
+
+### Notes
+
+- The free tier gives a different random URL every time ngrok restarts.
+- First-time visitors see a brief ngrok warning page — they click "Visit Site" to proceed.
+- If `ngrok` is not recognised in the terminal after install, add it to your user PATH permanently:
+  ```powershell
+  $ngrokDir = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe"
+  [Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$ngrokDir", "User")
+  ```
+  Open a new terminal after running this — existing sessions won't pick up the change.
+  Until then, use the full path directly:
+  ```powershell
+  & "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe" http 8501
+  ```
+- Keep your auth token private. If it is ever shared accidentally, regenerate it at [dashboard.ngrok.com/authtokens](https://dashboard.ngrok.com/authtokens) and re-run `ngrok config add-authtoken <new-token>`.
+
 ## Current Script Map
 
 - `automation_stage00.py`: Helm login, PreGen Failure detection, 4-pass bulk and per-order fix, manual intervention email if failures persist.
