@@ -403,6 +403,11 @@ Share the `https://...ngrok-free.app` URL with anyone who needs access. The tunn
   & "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe" http 8501
   ```
 - Keep your auth token private. If it is ever shared accidentally, regenerate it at [dashboard.ngrok.com/authtokens](https://dashboard.ngrok.com/authtokens) and re-run `ngrok config add-authtoken <new-token>`.
+- If you get `ERR_NGROK_334` (endpoint already online), a previous ngrok session is still running. Stop it first:
+  ```powershell
+  Stop-Process -Name ngrok -Force
+  ```
+  Then start the tunnel again normally.
 
 ## Current Script Map
 
