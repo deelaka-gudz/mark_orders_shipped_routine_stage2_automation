@@ -17,6 +17,8 @@ Stage 0 (automation_stage00.py)
     └─ Failures remain after all 4 passes → exit 1 → email sent → STOP
 ```
 
+Current Stage 0 reporting is scoped to today's Ship By Date. Non-today PreGen Failure orders can remain without blocking Stage 1 or Stage 2.
+
 ## What Rithum/ChannelAdvisor Does
 
 Rithum, formerly ChannelAdvisor, is the ecommerce platform that provides the order export file. That export tells us which orders need to be shipped.
@@ -29,6 +31,79 @@ In the full workflow there are two input files:
 `automation_stage01.py` fetches Rithum order data via the CA API first, then requests the Helm/DC shipping report. The CA API response is converted to Basic Layout column format (`DD/MM/YYYY HH:MM` dates, human-readable column names matching the Rithum UI export) before saving to `downloads/rithum_orders.csv`.
 
 ## Stage 0
+
+### Current Stage 0 Logic
+
+`automation_stage00.py` clears PreGen Failure orders in Helm before Stage 1 and Stage 2 are allowed to run. It uses four progressively targeted passes. Each pass opens the relevant PreGen Failure orders one by one, changes the courier service on the order detail page, clicks the shipping lock toggle, and sets the order back to PreGen status (3003) so Helm re-generates the label.
+
+Passes 1 and 2 do not use a Ship By Date filter. Passes 3 and 4 only process orders with today's Ship By Date.
+
+**Pass 1: No Ship By Date filter - Evri 24 Non POD**
+
+1. Click the PreGen Failure dashboard tile.
+2. Collect the visible PreGen Failure order links.
+3. Open each order one by one.
+4. Verify the Pregenerated Labels Plugin error is visible.
+5. Select `Evri 24 Non POD`.
+6. Click the shipping lock toggle.
+7. Set status to PreGen (3003).
+8. Poll the dashboard until the PreGen count reaches 0.
+9. Check the remaining PreGen Failure count.
+
+**Pass 2: No Ship By Date filter - Royal Mail 48 No Signature**
+
+Only runs if Pass 1 leaves failures:
+
+1. Click the PreGen Failure dashboard tile.
+2. Collect the visible PreGen Failure order links.
+3. Open each order one by one.
+4. Verify the Pregenerated Labels Plugin error is visible.
+5. Select `Royal Mail 48 No Signature`.
+6. Click the shipping lock toggle.
+7. Set status to PreGen (3003).
+8. Poll the dashboard until the PreGen count reaches 0.
+9. Check the remaining PreGen Failure count.
+
+**Pass 3: Today's Ship By Date - Royal Mail 48 No Signature**
+
+Only runs if Pass 2 leaves failures:
+
+1. Click the PreGen Failure dashboard tile.
+2. Open Filters.
+3. Apply today's Ship By Date filter.
+4. If the filtered count is 0, Stage 1 runs even if non-today PreGen Failures remain.
+5. Open each filtered order one by one.
+6. Verify the Pregenerated Labels Plugin error is visible.
+7. Select `Royal Mail 48 No Signature`.
+8. Click the shipping lock toggle.
+9. Set status to PreGen (3003).
+10. Poll the dashboard until the PreGen count reaches 0.
+
+**Pass 4: Today's Ship By Date - Royal Mail 48 With Signature**
+
+Only runs if Pass 3 leaves failures:
+
+1. Click the PreGen Failure dashboard tile.
+2. Apply today's Ship By Date filter.
+3. If the filtered count is 0, Stage 1 runs even if non-today PreGen Failures remain.
+4. Open each filtered order one by one.
+5. Verify the Pregenerated Labels Plugin error is visible.
+6. Select `Royal Mail 48 With Signature`.
+7. Click the shipping lock toggle.
+8. Set status to PreGen (3003).
+9. Poll the dashboard until the PreGen count reaches 0.
+10. Run the final reporting check for today's Ship By Date only.
+
+### Reporting Rule
+
+Stage 0 only reports and blocks when PreGen Failure orders remain for today's Ship By Date.
+
+After Pass 4, the script opens the PreGen Failure queue, applies today's Ship By Date filter, counts the filtered rows, and sends the manual intervention email only if that filtered count is greater than 0. If PreGen Failure orders remain on the dashboard but none match today's Ship By Date, Stage 0 exits with code 0 so Stage 1 and Stage 2 can continue.
+
+<!--
+### Previous Bulk-Action Notes
+
+The notes below describe the previous bulk-action implementation and are kept only for historical reference. The current script uses the per-order lock-toggle flow above.
 
 `automation_stage00.py` clears all PreGen Failure orders in Helm before Stage 1 and Stage 2 are allowed to run. It uses four progressively targeted passes.
 
@@ -101,6 +176,8 @@ When Stage 0 exits with code 1, an email is sent to:
 Subject: `ACTION REQUIRED: X PreGen Failure order(s) need manual attention`
 
 The email asks the recipient to log in to Helm, manually resolve the remaining PreGen Failure orders, and then re-run the automation.
+
+-->
 
 ### Key Helm Status IDs
 
@@ -326,6 +403,8 @@ Create a `.env` file in the repo root. Use `.env.example` as the template.
 
 `NOTIFY_EMAIL_FROM` and `NOTIFY_EMAIL_APP_PASSWORD` are optional. If absent, Stage 0 skips all email sending silently. All Stage 0 emails — both mid-run operational errors and the manual intervention alert — are sent to `deelaka@gudz.com`, `veer@gudz.com`, and `supply@gudz.com`. There is no separate `NOTIFY_EMAIL_TO` variable; the recipients are hardcoded.
 
+Current hardcoded Stage 0 recipients are `supply@gudz.com`, `veer@gudz.com`, `deelaka@gudz.com`, `chamike@gudz.com`, and `lavanga@gudz.com`.
+
 ## Run
 
 ```powershell
@@ -335,7 +414,7 @@ python automation_stage01.py
 python automation_stage02.py
 ```
 
-If Stage 0 exits with a non-zero code (unresolved PreGen Failures), do not run Stage 1 or Stage 2 until the failures are manually resolved in Helm.
+If Stage 0 exits with a non-zero code, today's Ship By Date still has unresolved PreGen Failure orders. Do not run Stage 1 or Stage 2 until those failures are manually resolved in Helm.
 
 The scripts print completed steps as they run. Rithum orders are saved to `downloads/rithum_orders.csv` by default. Helm report downloads are saved to `downloads/` by default.
 
@@ -413,7 +492,7 @@ Share the `https://...ngrok-free.app` URL with anyone who needs access. The tunn
 
 ## Current Script Map
 
-- `automation_stage00.py`: Helm login, PreGen Failure detection, 4-pass bulk and per-order fix, manual intervention email if failures persist.
+- `automation_stage00.py`: Helm login, PreGen Failure detection, 4-pass per-order courier/lock fix, and manual intervention email only when today's Ship By Date failures persist.
 - `automation_stage01.py`: Helm login, CA API order fetch (Basic Layout format), Shipping Report download, Rithum/order matching, non-GB review outputs.
 - `automation_stage02.py`: Full Orders Report download, Stage 2 matching, cancelled/despatch-ready handling, full Stage 1 merge, and tab-delimited tracking upload preparation.
 - `app.py`: local operator dashboard for running all three automation stages and downloading the generated handoff file.
