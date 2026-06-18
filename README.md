@@ -318,6 +318,10 @@ The script maps values like this:
 The manual spreadsheet uses formulas and paste-as-values. In Python, those are represented as direct transformations:
 
 - The carrier/class lookup is handled by `courier_conversions.json`.
+- International orders are detected from the order country/status before domestic generated-tracking logic runs.
+- If an international order has a real tracking number from the DC/Helm lookup, the script keeps that tracking number and uses the courier/class conversion for the matched `DC Ship M` service.
+- If an international order has no real tracking number, the script outputs `Royal Mail` / `Airmail` and leaves `Tracking Number` blank.
+- Domestic Evri 24 rows with no real tracking number can receive a generated Evri tracking number from the first usable Evri 24 tracking seed in the run.
 - The raw helper column is removed in memory after conversion.
 - Cancelled rows are flagged with `Prevent Site Processing = TRUE`.
 - Non-cancelled rows are flagged with `Prevent Site Processing = FALSE`.

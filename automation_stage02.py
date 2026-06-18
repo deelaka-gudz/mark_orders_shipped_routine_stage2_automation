@@ -1254,14 +1254,12 @@ def build_tracking_upload_template_rows(
     for source_row, upload_row in upload_pairs:
         if _is_international_row(source_row):
             if not _has_real_tracking_number(upload_row):
+                upload_row["Tracking Number"] = ""
                 upload_row["Shipping Carrier Code"] = "Royal Mail"
                 upload_row["Shipping Class Code"] = "Airmail"
-        elif (
-            _is_cancelled_row(source_row)
-            or _needs_generated_evri_tracking_row(
-                source_row,
-                upload_row,
-            )
+        elif _is_cancelled_row(source_row) or _needs_generated_evri_tracking_row(
+            source_row,
+            upload_row,
         ):
             upload_row["Shipping Carrier Code"] = "Evri"
             upload_row["Shipping Class Code"] = "EVRI 24"
@@ -1409,7 +1407,29 @@ def _shipping_conversion_values(
 
 
 def _is_international_row(row: dict[str, str]) -> bool:
-    return _row_status(row) == "international"
+    if _row_status(row) == "international":
+        return True
+
+    country = str(row.get("Shipping Country", "") or "").strip()
+    if country and not _is_uk_country(country):
+        return True
+
+    return False
+
+
+def _is_uk_country(value: str) -> bool:
+    normalized = re.sub(r"[^A-Z]", "", value.upper())
+    return normalized in {
+        "GB",
+        "GBR",
+        "UK",
+        "UNITEDKINGDOM",
+        "GREATBRITAIN",
+        "ENGLAND",
+        "SCOTLAND",
+        "WALES",
+        "NORTHERNIRELAND",
+    }
 
 
 def _is_cancelled_row(row: dict[str, str]) -> bool:
@@ -1423,12 +1443,16 @@ def _needs_generated_evri_tracking_row(
     if not _is_placeholder_value(str(upload_row.get("Tracking Number", "") or "")):
         return False
 
+    if _is_evri_24_service_row(upload_row):
+        return True
+
     return _row_status(source_row) in {
         "pregen failure",
         "picked",
         "picking",
         "despatched",
         "despatch ready",
+        "unshipped",
     }
 
 
@@ -1444,6 +1468,8 @@ def _row_status(row: dict[str, str]) -> str:
         "Full Orders Status",
         "Order Status",
         "Status",
+        "Shipping Status",
+        "Site Shipping Status",
     ):
         status = str(row.get(column, "") or "").strip().lower()
         if status:
@@ -1453,13 +1479,13 @@ def _row_status(row: dict[str, str]) -> str:
 
 def _is_evri_24_upload_row(row: dict[str, str]) -> bool:
     tracking_number = str(row.get("Tracking Number", "") or "").strip()
+    return _is_usable_tracking_seed(tracking_number) and _is_evri_24_service_row(row)
+
+
+def _is_evri_24_service_row(row: dict[str, str]) -> bool:
     carrier_code = str(row.get("Shipping Carrier Code", "") or "").strip().upper()
     class_code = str(row.get("Shipping Class Code", "") or "").strip().upper()
-    return (
-        _is_usable_tracking_seed(tracking_number)
-        and carrier_code == "EVRI"
-        and class_code == "EVRI 24"
-    )
+    return carrier_code == "EVRI" and class_code == "EVRI 24"
 
 
 def _resolve_column(
