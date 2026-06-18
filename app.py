@@ -14,7 +14,7 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS_DIR = ROOT / "downloads"
-FINAL_OUTPUT_PATH = DOWNLOADS_DIR / "tracking_upload_template.txt"
+FINAL_OUTPUT_PATTERN = "tracking_upload_template*.txt"
 UNMAPPED_COURIERS_PATH = DOWNLOADS_DIR / "unmapped_courier_services.csv"
 
 STAGE_SCRIPTS = [
@@ -170,6 +170,19 @@ def generated_files() -> list[Path]:
     )
 
 
+def latest_tracking_upload_path() -> Path | None:
+    if not DOWNLOADS_DIR.exists():
+        return None
+    files = [
+        path
+        for path in DOWNLOADS_DIR.glob(FINAL_OUTPUT_PATTERN)
+        if path.is_file()
+    ]
+    if not files:
+        return None
+    return max(files, key=lambda path: path.stat().st_mtime)
+
+
 def render_generated_files() -> None:
     st.subheader("Generated Files")
     files = generated_files()
@@ -195,9 +208,10 @@ def render_generated_files() -> None:
 
 def render_downloads() -> None:
     st.subheader("Final Output")
-    if FINAL_OUTPUT_PATH.exists():
-        st.success(f"Final output ready: {FINAL_OUTPUT_PATH}")
-        upload_stats = tracking_upload_stats(FINAL_OUTPUT_PATH)
+    final_output_path = latest_tracking_upload_path()
+    if final_output_path:
+        st.success(f"Final output ready: {final_output_path}")
+        upload_stats = tracking_upload_stats(final_output_path)
         if upload_stats["rows"]:
             st.caption(
                 "Rows: {rows} | Complete tracking rows: {complete_rows} | "
@@ -212,8 +226,8 @@ def render_downloads() -> None:
             )
         st.download_button(
             "Download tracking upload file",
-            data=FINAL_OUTPUT_PATH.read_bytes(),
-            file_name=FINAL_OUTPUT_PATH.name,
+            data=final_output_path.read_bytes(),
+            file_name=final_output_path.name,
             mime="text/plain",
         )
 
@@ -353,7 +367,7 @@ def main() -> None:
             render_generated_files()
 
     with left:
-        render_cancelled_tracking_rows(FINAL_OUTPUT_PATH)
+        render_cancelled_tracking_rows(latest_tracking_upload_path() or Path())
         st.subheader("Run Status")
         workflow_status = st.empty()
         stage_status = st.empty()

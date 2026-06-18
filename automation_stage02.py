@@ -1,4 +1,5 @@
 import csv
+import datetime
 import json
 import os
 import re
@@ -30,6 +31,11 @@ DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 _TRACKING_UPLOAD_EXPORT_DIR = Path(
     r"S:\Excel Automatic\CA Tracking Update\Mark Shipped Automation - Deelaka Testing"
 )
+
+
+def _timestamped_tracking_upload_path() -> Path:
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Path(f"downloads/tracking_upload_template_{timestamp}.txt")
 
 
 def _copy_tracking_upload_to_export(source_path: Path) -> None:
@@ -144,7 +150,7 @@ class Config:
             full_orders_matched_output_path=Path(
                 "downloads/stage2_full_orders_matched.csv"
             ),
-            tracking_upload_output_path=Path("downloads/tracking_upload_template.txt"),
+            tracking_upload_output_path=_timestamped_tracking_upload_path(),
             cancelled_tracking_orders_output_path=Path(
                 "downloads/cancelled_tracking_orders.csv"
             ),
@@ -1228,17 +1234,24 @@ def build_tracking_upload_template_rows(
     courier_conversions: dict[str, tuple[str, str]],
     unmapped_services: set[str],
 ) -> list[dict[str, str]]:
+    upload_pairs = [
+        (
+            source_row,
+            _tracking_upload_template_row(
+                source_row,
+                courier_conversions,
+                unmapped_services,
+            ),
+        )
+        for source_row in rows
+    ]
     upload_rows = []
-    evri_tracking_seed = ""
+    evri_tracking_seed = _first_evri_24_tracking_seed(
+        upload_row for _source_row, upload_row in upload_pairs
+    )
     generated_international_count = 0
 
-    for source_row in rows:
-        upload_row = _tracking_upload_template_row(
-            source_row,
-            courier_conversions,
-            unmapped_services,
-        )
-
+    for source_row, upload_row in upload_pairs:
         if _is_international_row(source_row):
             if not _has_real_tracking_number(upload_row):
                 upload_row["Shipping Carrier Code"] = "Royal Mail"
@@ -1268,6 +1281,13 @@ def build_tracking_upload_template_rows(
             generated_international_count = 0
 
     return upload_rows
+
+
+def _first_evri_24_tracking_seed(rows) -> str:
+    for row in rows:
+        if _is_evri_24_upload_row(row):
+            return str(row.get("Tracking Number", "") or "").strip()
+    return ""
 
 
 def _tracking_upload_template_row(
