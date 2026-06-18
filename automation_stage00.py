@@ -253,10 +253,16 @@ def _open_order_link(page: Page, order: dict[str, str]) -> None:
 
 
 def _process_pregen_failure_order(
-    page: Page, order: dict[str, str], index: int, config: Any
+    page: Page,
+    order: dict[str, str],
+    index: int,
+    config: Any,
+    select_shipping,
+    shipping_description: str,
+    step_prefix: str,
 ) -> None:
     _open_order_link(page, order)
-    _log_step(f"Step 40[{index}]: Open order ID {order['order_id']}")
+    _log_step(f"{step_prefix}[{index}]: Open order ID {order['order_id']}")
 
     if not _verify_pregen_label_error_exists(page):
         skip_msg = (
@@ -269,18 +275,66 @@ def _process_pregen_failure_order(
             f"PreGen Failure: Order {order['order_id']} skipped — no label error found",
             f"{skip_msg}\n\nThis order may be in an unexpected state. Please check it manually in Helm.",
         )
-        _log_step(f"Step 40.1[{index}]: Pregenerated Labels Plugin error not found")
+        _log_step(
+            f"{step_prefix}.1[{index}]: Pregenerated Labels Plugin error not found"
+        )
         return
-    _log_step(f"Step 40.1[{index}]: Verify Pregenerated Labels Plugin error")
+    _log_step(f"{step_prefix}.1[{index}]: Verify Pregenerated Labels Plugin error")
 
-    _select_royal_mail_tracked_48_with_signature(page)
-    _log_step(f"Step 40.2[{index}]: Select RoyalMail Tracked 48 With Signature")
+    select_shipping(page)
+    _log_step(f"{step_prefix}.2[{index}]: Select {shipping_description}")
 
-    _click_visible_toggle_or_retry_shipping(page)
-    _log_step(f"Step 40.3[{index}]: Click visible toggle button")
+    _click_visible_toggle_or_retry_shipping(page, select_shipping)
+    _log_step(f"{step_prefix}.3[{index}]: Click lock toggle button")
 
     _select_order_status_pregen(page)
-    _log_step(f"Step 40.4[{index}]: Select PreGen status")
+    _log_step(f"{step_prefix}.4[{index}]: Select PreGen status")
+
+
+def _process_current_pregen_failure_orders(
+    page: Page,
+    config: Any,
+    select_shipping,
+    shipping_description: str,
+    pass_label: str,
+    step_prefix: str,
+) -> int:
+    try:
+        orders = _collect_order_links(page)
+    except RuntimeError as exc:
+        msg = f"{pass_label}: Could not collect order links from the page: {exc}"
+        print(f"[WARN] {msg}")
+        _send_failure_email(
+            config,
+            f"PreGen Failure: Cannot Collect Orders ({pass_label})",
+            f"{msg}\n\nPlease open Helm and process the remaining PreGen Failure orders manually.",
+        )
+        return 0
+
+    for index, order in enumerate(orders, start=1):
+        try:
+            _process_pregen_failure_order(
+                page,
+                order,
+                index,
+                config,
+                select_shipping,
+                shipping_description,
+                step_prefix,
+            )
+        except Exception as order_exc:
+            msg = (
+                f"{pass_label} ({step_prefix}[{index}]): "
+                f"Order {order['order_id']} failed: {order_exc}"
+            )
+            print(f"[WARN] {msg}")
+            _send_failure_email(
+                config,
+                f"PreGen Failure: Order {order['order_id']} failed ({pass_label})",
+                f"{msg}\n\nThis order needs to be resolved manually in Helm.",
+            )
+
+    return len(orders)
 
 
 def _verify_pregen_label_error_exists(page: Page) -> bool:
@@ -317,14 +371,19 @@ def _verify_pregen_label_error_exists(page: Page) -> bool:
     return False
 
 
-def _select_royal_mail_tracked_48_with_signature(page: Page) -> None:
+def _select_order_detail_shipping_service(
+    page: Page,
+    shipping_description: str,
+    target_value: str,
+    target_text: str,
+    required_fragments: Sequence[str],
+) -> None:
     shipping_method = page.locator("select[name='shipping_method_requested']")
     shipping_method.first.wait_for(state="visible", timeout=10000)
     selected_text = shipping_method.first.evaluate("""
         select => select.options[select.selectedIndex]?.textContent || ""
         """)
     print(f"[INFO] Existing shipping method: {selected_text.strip()}")
-    target_value = "RoyalMailClickAndDrop ~ RMCD Tracked 48 (TPS48)- With Signature"
     try:
         shipping_method.first.select_option(value=target_value, timeout=5000)
     except PlaywrightError:
@@ -332,15 +391,14 @@ def _select_royal_mail_tracked_48_with_signature(page: Page) -> None:
 
     selected_service = shipping_method.first.evaluate(
         """
-        (select, targetValue) => {
+        (select, {targetValue, targetText, requiredFragments}) => {
             const normalize = value => value
                 .replace(/\\s+/g, " ")
                 .replace(/[\\u2013\\u2014-]/g, "-")
                 .replace(/\\s*-\\s*/g, "-")
                 .trim();
-            const target = normalize(
-                "RoyalMailClickAndDrop ~ RMCD Tracked 48 (TPS48) - With Signature"
-            );
+            const target = normalize(targetText);
+            const fragments = requiredFragments.map(normalize);
             const options = Array.from(select.options);
             const option = options.find(item => {
                 const group = item.closest("optgroup");
@@ -357,10 +415,7 @@ def _select_royal_mail_tracked_48_with_signature(page: Page) -> None:
                 const text = normalize(item.textContent || item.value || "");
                 return group
                     && group.label === "All Courier Services"
-                    && text.includes("RoyalMailClickAndDrop")
-                    && text.includes("RMCD Tracked 48")
-                    && text.includes("TPS48")
-                    && text.includes("With Signature");
+                    && fragments.every(fragment => text.includes(fragment));
             });
 
             if (!option) {
@@ -382,12 +437,17 @@ def _select_royal_mail_tracked_48_with_signature(page: Page) -> None:
 
             return {
                 text: (finalSelected.textContent || "").replace(/\\s+/g, " ").trim(),
+                value: finalSelected.value || "",
                 group: finalGroup,
                 index: select.selectedIndex,
             };
         }
         """,
-        target_value,
+        {
+            "targetValue": target_value,
+            "targetText": target_text,
+            "requiredFragments": list(required_fragments),
+        },
     )
     print(
         "[INFO] Selected courier service: "
@@ -395,15 +455,39 @@ def _select_royal_mail_tracked_48_with_signature(page: Page) -> None:
     )
     _wait_for_network_idle(page)
     page.wait_for_timeout(1000)
-    final_value = shipping_method.first.input_value(timeout=5000)
-    if final_value != target_value:
-        raise RuntimeError(
-            "Shipping method did not stay on the With Signature service. "
-            f"Current value: {final_value}"
-        )
 
 
-def _click_visible_toggle_or_retry_shipping(page: Page) -> None:
+def _select_evri_24_non_pod_order_detail(page: Page) -> None:
+    _select_order_detail_shipping_service(
+        page,
+        "Evri 24 Non POD",
+        "EvriCorporate ~ Evri 24 Non POD",
+        "EvriCorporate - Evri 24 Non POD",
+        ["EvriCorporate", "Evri 24 Non POD"],
+    )
+
+
+def _select_royal_mail_tracked_48_no_signature_order_detail(page: Page) -> None:
+    _select_order_detail_shipping_service(
+        page,
+        "Royal Mail Tracked 48 No Signature",
+        "RoyalMailClickAndDrop ~ RMCD Tracked 48 (TPS48)- No Signature",
+        "RoyalMailClickAndDrop ~ RMCD Tracked 48 (TPS48) - No Signature",
+        ["RoyalMailClickAndDrop", "RMCD Tracked 48", "TPS48", "No Signature"],
+    )
+
+
+def _select_royal_mail_tracked_48_with_signature(page: Page) -> None:
+    _select_order_detail_shipping_service(
+        page,
+        "Royal Mail Tracked 48 With Signature",
+        "RoyalMailClickAndDrop ~ RMCD Tracked 48 (TPS48)- With Signature",
+        "RoyalMailClickAndDrop ~ RMCD Tracked 48 (TPS48) - With Signature",
+        ["RoyalMailClickAndDrop", "RMCD Tracked 48", "TPS48", "With Signature"],
+    )
+
+
+def _click_visible_toggle_or_retry_shipping(page: Page, retry_select_shipping) -> None:
     toggle = (
         page.locator(".toggle-group")
         .filter(has=page.locator(".toggle-on", has_text=re.compile(r"\bOn\b", re.I)))
@@ -413,7 +497,7 @@ def _click_visible_toggle_or_retry_shipping(page: Page) -> None:
     try:
         toggle.first.wait_for(state="visible", timeout=5000)
     except PlaywrightTimeoutError:
-        _select_royal_mail_tracked_48_with_signature(page)
+        retry_select_shipping(page)
         toggle.first.wait_for(state="visible", timeout=10000)
 
     toggle.first.click(timeout=5000)
@@ -789,6 +873,88 @@ def _check_remaining_pregen_failure_orders(page: Page, config: Any) -> int:
     return pregen_failure_count
 
 
+def _apply_today_ship_by_date_filter(page: Page, start_step: int) -> int:
+    _click_filters_button(page)
+    _log_step(f"Step {start_step}: Click Filters button")
+
+    _click_ship_by_date_filter(page)
+    _log_step(f"Step {start_step + 1}: Click Ship By Date filter")
+
+    _fill_ship_by_date_today(page)
+    _log_step(f"Step {start_step + 2}: Fill Ship By Date with today's date")
+
+    _click_apply_filters(page)
+    _log_step(f"Step {start_step + 3}: Click Apply Filters button")
+
+    filtered_count = _get_filtered_record_count(page)
+    print(f"[INFO] Filtered record count after Ship By Date filter: {filtered_count}")
+    return filtered_count
+
+
+def _run_pregen_failure_detail_pass(
+    page: Page,
+    config: Any,
+    select_shipping,
+    shipping_description: str,
+    pass_label: str,
+    step_prefix: str,
+    wait_step: int,
+) -> None:
+    processed_count = _process_current_pregen_failure_orders(
+        page,
+        config,
+        select_shipping,
+        shipping_description,
+        pass_label,
+        step_prefix,
+    )
+    print(f"[INFO] {pass_label}: processed {processed_count} order(s).")
+    try:
+        _wait_for_pregen_count_zero(page)
+    except RuntimeError as exc:
+        msg = f"{pass_label} (Step {wait_step}): Timed out waiting for PreGen queue to drain: {exc}"
+        print(f"[WARN] {msg}")
+        _send_failure_email(
+            config,
+            f"PreGen Failure: Queue Timeout ({pass_label} Step {wait_step})",
+            msg,
+        )
+        raise
+    _log_step(f"Step {wait_step}: Wait until PreGen status count is 0")
+
+
+def _check_remaining_today_ship_by_date_pregen_failure_orders(
+    page: Page,
+    config: Any,
+) -> int:
+    _go_to_dashboard(page)
+    pregen_failure_count = _status_count(page, "#status_id_3009")
+    if pregen_failure_count <= 0:
+        print("[INFO] No PreGen Failure orders remain.")
+        return 0
+
+    _click_pregen_failure(page)
+    today_count = _apply_today_ship_by_date_filter(page, 42)
+    if today_count <= 0:
+        print(
+            f"[INFO] {pregen_failure_count} PreGen Failure order(s) remain, "
+            "but none match today's Ship By Date. No manual alert will be sent."
+        )
+        return 0
+
+    warning = (
+        f"{today_count} PreGen Failure order(s) with today's Ship By Date still remain. "
+        "Click Start automation to run again."
+    )
+    print(f"[WARN] {warning}")
+    _send_failure_email(
+        config,
+        f"PreGen Failure: {today_count} today ship-by-date order(s) need manual fix",
+        f"{warning}\n\nPlease log in to Helm and resolve today's remaining orders manually.",
+    )
+    return today_count
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -960,6 +1126,130 @@ def run(config: Config) -> int:
                 )
                 return 0
             _log_step("Step 2: Click Pregen failure")
+
+            _run_pregen_failure_detail_pass(
+                page,
+                config,
+                _select_evri_24_non_pod_order_detail,
+                "Evri 24 Non POD",
+                "Pass 1",
+                "Step 3",
+                4,
+            )
+
+            final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
+                page
+            )
+            _log_step("Step 5: Check PreGen Failure count")
+            if final_pregen_failure_count <= 0:
+                print(
+                    "[INFO] PreGen Failure count is 0 after Pass 1 - Stage 1 will now run"
+                )
+                time.sleep(2)
+                return 0
+
+            remaining_pregen_failure_count = _click_pregen_failure(page)
+            if remaining_pregen_failure_count <= 0:
+                return 0
+            _log_step("Step 6: Click Pregen failure")
+
+            _run_pregen_failure_detail_pass(
+                page,
+                config,
+                _select_royal_mail_tracked_48_no_signature_order_detail,
+                "Royal Mail 48 No Signature",
+                "Pass 2",
+                "Step 7",
+                8,
+            )
+
+            final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
+                page
+            )
+            _log_step("Step 9: Check PreGen Failure count")
+            if final_pregen_failure_count <= 0:
+                print(
+                    "[INFO] PreGen Failure count is 0 after Pass 2 - Stage 1 will now run"
+                )
+                time.sleep(2)
+                return 0
+
+            remaining_pregen_failure_count = _click_pregen_failure(page)
+            if remaining_pregen_failure_count <= 0:
+                return 0
+            _log_step("Step 10: Click Pregen failure")
+
+            filtered_count = _apply_today_ship_by_date_filter(page, 11)
+            if filtered_count == 0:
+                print(
+                    f"[INFO] {final_pregen_failure_count} PreGen Failure order(s) remain, "
+                    "but none match today's ship date. Stage 1 will now run."
+                )
+                time.sleep(2)
+                return 0
+
+            _run_pregen_failure_detail_pass(
+                page,
+                config,
+                _select_royal_mail_tracked_48_no_signature_order_detail,
+                "Royal Mail 48 No Signature",
+                "Pass 3",
+                "Step 15",
+                16,
+            )
+
+            final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
+                page
+            )
+            _log_step("Step 17: Check PreGen Failure count")
+            if final_pregen_failure_count <= 0:
+                print(
+                    "[INFO] PreGen Failure count is 0 after Pass 3 - Stage 1 will now run"
+                )
+                time.sleep(2)
+                return 0
+
+            remaining_pregen_failure_count = _click_pregen_failure(page)
+            if remaining_pregen_failure_count <= 0:
+                return 0
+            _log_step("Step 18: Click Pregen failure")
+
+            filtered_count = _apply_today_ship_by_date_filter(page, 19)
+            if filtered_count == 0:
+                print(
+                    f"[INFO] {final_pregen_failure_count} PreGen Failure order(s) remain, "
+                    "but none match today's ship date. Stage 1 will now run."
+                )
+                time.sleep(2)
+                return 0
+
+            _run_pregen_failure_detail_pass(
+                page,
+                config,
+                _select_royal_mail_tracked_48_with_signature,
+                "Royal Mail 48 With Signature",
+                "Pass 4",
+                "Step 23",
+                24,
+            )
+
+            remaining_count = _check_remaining_today_ship_by_date_pregen_failure_orders(
+                page, config
+            )
+            _log_step(
+                "Step 25: Check remaining today's Ship By Date PreGen Failure orders"
+            )
+            if remaining_count > 0:
+                print(
+                    f"[WARN] Stage 0 finished with {remaining_count} unresolved "
+                    "today Ship By Date PreGen Failure order(s). Stage 1 and Stage 2 will not run."
+                )
+                _send_manual_intervention_alert(config, remaining_count)
+                return remaining_count
+
+            print("[INFO] PreGen Failure count is 0 - Stage 1 will now run")
+            time.sleep(2)
+            return 0
 
             _select_all_orders_on_page(page)
             _log_step("Step 3: Click select all on page checkbox")
