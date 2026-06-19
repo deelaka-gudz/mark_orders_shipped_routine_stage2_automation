@@ -100,84 +100,7 @@ Stage 0 only reports and blocks when PreGen Failure orders remain for today's Sh
 
 After Pass 4, the script opens the PreGen Failure queue, applies today's Ship By Date filter, counts the filtered rows, and sends the manual intervention email only if that filtered count is greater than 0. If PreGen Failure orders remain on the dashboard but none match today's Ship By Date, Stage 0 exits with code 0 so Stage 1 and Stage 2 can continue.
 
-<!--
-### Previous Bulk-Action Notes
-
-The notes below describe the previous bulk-action implementation and are kept only for historical reference. The current script uses the per-order lock-toggle flow above.
-
-`automation_stage00.py` clears all PreGen Failure orders in Helm before Stage 1 and Stage 2 are allowed to run. It uses four progressively targeted passes.
-
-### 4-Pass Logic
-
-**Pass 1 (Steps 2–10): Bulk Evri 24 Non POD**
-
-1. Click the PreGen Failure dashboard tile.
-2. Select all orders on the page.
-3. Bulk action → Set Shipping → EvriCorporate Evri 24 Non POD.
-4. Submit bulk action.
-5. Set all orders to PreGen status (3003) to re-trigger label generation.
-6. Poll dashboard until PreGen count reaches 0 (30-min timeout).
-7. Check remaining PreGen Failure count.
-
-**Pass 2 (Steps 12–24): Bulk Royal Mail Tracked 48 No Signature (date-filtered)**
-
-Only runs if Pass 1 left failures:
-
-1. Click PreGen Failure tile.
-2. Open the Filters panel.
-3. Expand the Ship By Date filter.
-4. Fill Ship By Date with today's date.
-5. Click Apply Filters.
-6. Check filtered record count — if 0, verify total dashboard count:
-   - Total = 0 → Stage 1 runs.
-   - Total > 0 → email sent to intervention recipients → Stage 1 blocked.
-7. Select all filtered orders.
-8. Bulk action → Set Shipping → RoyalMailClickAndDrop RMCD Tracked 48 No Signature.
-9. Submit bulk action.
-10. Set all orders to PreGen status (3003).
-11. Poll dashboard until PreGen count reaches 0.
-
-**Pass 3 (Steps 26–38): Repeat of Pass 2**
-
-Only runs if Pass 2 left failures. Identical bulk flow with the same date filter and Royal Mail No Signature option.
-
-**Pass 4 (Steps 40–41.5): Per-order Royal Mail Tracked 48 With Signature**
-
-Only runs if Pass 3 left failures:
-
-1. Collect all remaining PreGen Failure order links.
-2. For each order:
-   - Verify the Pregenerated Labels Plugin error is visible.
-   - Select RoyalMailClickAndDrop RMCD Tracked 48 With Signature.
-   - Click the On/Off toggle to re-trigger label generation.
-   - Set status to PreGen (3003).
-3. Check final dashboard count.
-   - Count = 0 → Stage 1 runs.
-   - Count > 0 → `[WARN]` logged, email sent to intervention recipients → Stage 1 blocked (exit code 1).
-
-### Exit Behaviour
-
-| Outcome                               | Exit code | Stage 1     |
-| ------------------------------------- | --------- | ----------- |
-| 0 PreGen Failures from the start      | 0         | Runs        |
-| All failures resolved during any pass | 0         | Runs        |
-| Failures remain after all 4 passes    | 1         | **Blocked** |
-
-### Manual Intervention Email
-
-When Stage 0 exits with code 1, an email is sent to:
-
-- `supply@gudz.com`
-- `veer@gudz.com`
-- `deelaka@gudz.com`
-- `chamike@gudz.com`
-- `lavanga@gudz.com`
-
-Subject: `ACTION REQUIRED: X PreGen Failure order(s) need manual attention`
-
-The email asks the recipient to log in to Helm, manually resolve the remaining PreGen Failure orders, and then re-run the automation.
-
--->
+**Per-order error emails are only sent during Pass 4.** Passes 1, 2, and 3 suppress individual order failure emails to avoid noise for orders that may not be due today. System-level errors (login failure, cannot collect orders page, PreGen queue timeout) are always emailed regardless of pass.
 
 ### Key Helm Status IDs
 
@@ -228,17 +151,18 @@ downloads/non_gb_unmatched_orders_review.csv
 downloads/dc_full_orders_export.csv
 downloads/stage2_full_orders_matched.csv
 downloads/unmapped_courier_services.csv
-downloads/tracking_upload_template.txt
+downloads/tracking_upload_template_{timestamp}.txt
 ```
 
 Stage 1 starts with the Rithum order export and the Helm/DC Shipping Report. It produces `matched_orders.csv`, which is the full enriched order file. It also produces review files for non-GB rows, including `non_gb_unmatched_orders_review.csv`, which is the smaller set of rows that still need Stage 2 correction.
 
 Stage 2 downloads the Helm Full Orders Report as `dc_full_orders_export.csv`, matches it against `non_gb_unmatched_orders_review.csv`, and writes the detailed correction review to `stage2_full_orders_matched.csv`. That review file is then merged back into the full Stage 1 `matched_orders.csv` data in memory.
 
-The final output is:
+The final output is written to the working folder and then copied to the shared output location:
 
 ```text
-downloads/tracking_upload_template.txt
+downloads/tracking_upload_template_{timestamp}.txt          ← working copy
+M:\Final Automations\Mark Orders Shipped\Output Files\      ← final export copy
 ```
 
 That file is the tab-delimited tracking upload handoff. It is built from the full Stage 1 matched export plus any Stage 2 corrections.
@@ -296,7 +220,7 @@ The manual process opens a separate upload template and copy/pastes values into 
 The memorized upload-template columns are:
 
 ```text
-Invoice No
+Invoice Number
 Tracking Number
 Date Shipped
 Shipping Carrier Source
@@ -307,7 +231,7 @@ Prevent Site Processing
 
 The script maps values like this:
 
-- `Invoice No`: from `SiteOrderID`
+- `Invoice Number`: from `SiteOrderID`
 - `Tracking Number`: from `DC Track`
 - `Date Shipped`: from `DC Date`
 - `Shipping Carrier Source`: from `DC Ship M`
@@ -330,11 +254,13 @@ The manual spreadsheet uses formulas and paste-as-values. In Python, those are r
 - The manual save step is represented as a tab-delimited upload handoff only.
 - The CA/Rithum FTP or API upload is intentionally paused until manager approval is confirmed.
 
-The final manual steps save the completed template into the `CA Tracking Update\Out` folder as `Text (Tab delimited)`. The script now writes the same tab-delimited upload handoff to `TRACKING_UPLOAD_OUTPUT_PATH`, but does not upload it. By default this is:
+The final manual steps save the completed template into the `CA Tracking Update\Out` folder as `Text (Tab delimited)`. The script now writes the same tab-delimited upload handoff to `TRACKING_UPLOAD_OUTPUT_PATH`, but does not upload it. The file is written to the working `downloads/` folder first, then automatically copied to the final output location:
 
 ```text
-downloads/tracking_upload_template.txt
+M:\Final Automations\Mark Orders Shipped\Output Files\tracking_upload_template_{timestamp}.txt
 ```
+
+The `M:\` drive must be mounted and accessible on the machine running the automation. If the drive is unavailable, the copy step fails with a `[WARN]` log but does not stop the automation — the file remains accessible in `downloads/`.
 
 ## Courier Conversions
 
@@ -435,7 +361,7 @@ The dashboard runs Stage 0, Stage 1, and Stage 2 in sequence with a single butto
 
 Runs launched from the dashboard force `AUTOMATION_HEADLESS=true`, so Playwright runs without opening the browser window even if `.env` has `HEADLESS=false`.
 
-The dashboard still respects the upload pause. It only generates `downloads/tracking_upload_template.txt`; it does not upload to Rithum/ChannelAdvisor or FTP.
+The dashboard still respects the upload pause. It generates the tracking upload handoff in `downloads/` and copies it to `M:\Final Automations\Mark Orders Shipped\Output Files\`; it does not upload to Rithum/ChannelAdvisor or FTP.
 
 ## Exposing the Dashboard Publicly with ngrok
 
