@@ -308,7 +308,7 @@ def render_cancelled_tracking_rows(path: Path) -> None:
 
     st.warning(f"Cancelled rows found: {len(rows)}")
     visible_columns = [
-        "Invoice No",
+        "Invoice Number",
         "Tracking Number",
         "Date Shipped",
         "Shipping Carrier Code",

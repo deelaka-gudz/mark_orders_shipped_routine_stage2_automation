@@ -85,7 +85,7 @@ def _send_completion_email() -> None:
 
 
 TRACKING_UPLOAD_TEMPLATE_COLUMNS = [
-    "Invoice No",
+    "Invoice Number",
     "Tracking Number",
     "Date Shipped",
     "Shipping Carrier Source",
@@ -903,7 +903,7 @@ def match_stage1_unmatched_rows_to_full_orders(
     _log_step("Step 61: Selected A2 in tracking upload template equivalent")
     _log_step(
         "Step 62: Pasted "
-        f"{_count_template_values(upload_template_rows, 'Invoice No')} "
+        f"{_count_template_values(upload_template_rows, 'Invoice Number')} "
         "Invoice No values into template column A"
     )
     _log_step("Step 63: Selected B1 Tracking Number template column")
@@ -1193,7 +1193,7 @@ def write_cancelled_tracking_orders_file(
 ) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
-        "Invoice No",
+        "Invoice Number",
         "Tracking Number",
         "Date Shipped",
         "Shipping Carrier Code",
@@ -1300,7 +1300,7 @@ def _tracking_upload_template_row(
         unmapped_services,
     )
     return {
-        "Invoice No": _first_row_value(row, ["SiteOrderID", "Site Order ID"]),
+        "Invoice Number": _first_row_value(row, ["SiteOrderID", "Site Order ID"]),
         "Tracking Number": str(row.get("DC Track", "") or "").strip(),
         "Date Shipped": _date_shipped_value(row),
         "Shipping Carrier Source": shipping_method,
