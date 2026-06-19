@@ -29,7 +29,7 @@ from automation_stage01 import (
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 
 _TRACKING_UPLOAD_EXPORT_DIR = Path(
-    r"S:\Excel Automatic\CA Tracking Update\Mark Shipped Automation - Deelaka Testing"
+    r"M:\Final Automations\Mark Orders Shipped\Output Files"
 )
 
 
