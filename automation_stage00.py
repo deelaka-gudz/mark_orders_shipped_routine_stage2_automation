@@ -260,6 +260,7 @@ def _process_pregen_failure_order(
     select_shipping,
     shipping_description: str,
     step_prefix: str,
+    notify_on_order_failure: bool = True,
 ) -> None:
     _open_order_link(page, order)
     _log_step(f"{step_prefix}[{index}]: Open order ID {order['order_id']}")
@@ -270,11 +271,12 @@ def _process_pregen_failure_order(
             "Plugin error. Skipping this order."
         )
         print(f"[WARN] {skip_msg}")
-        _send_failure_email(
-            config,
-            f"PreGen Failure: Order {order['order_id']} skipped — no label error found",
-            f"{skip_msg}\n\nThis order may be in an unexpected state. Please check it manually in Helm.",
-        )
+        if notify_on_order_failure:
+            _send_failure_email(
+                config,
+                f"PreGen Failure: Order {order['order_id']} skipped — no label error found",
+                f"{skip_msg}\n\nThis order may be in an unexpected state. Please check it manually in Helm.",
+            )
         _log_step(
             f"{step_prefix}.1[{index}]: Pregenerated Labels Plugin error not found"
         )
@@ -298,6 +300,7 @@ def _process_current_pregen_failure_orders(
     shipping_description: str,
     pass_label: str,
     step_prefix: str,
+    notify_on_order_failure: bool = True,
 ) -> int:
     try:
         orders = _collect_order_links(page)
@@ -321,6 +324,7 @@ def _process_current_pregen_failure_orders(
                 select_shipping,
                 shipping_description,
                 step_prefix,
+                notify_on_order_failure,
             )
         except Exception as order_exc:
             msg = (
@@ -328,11 +332,12 @@ def _process_current_pregen_failure_orders(
                 f"Order {order['order_id']} failed: {order_exc}"
             )
             print(f"[WARN] {msg}")
-            _send_failure_email(
-                config,
-                f"PreGen Failure: Order {order['order_id']} failed ({pass_label})",
-                f"{msg}\n\nThis order needs to be resolved manually in Helm.",
-            )
+            if notify_on_order_failure:
+                _send_failure_email(
+                    config,
+                    f"PreGen Failure: Order {order['order_id']} failed ({pass_label})",
+                    f"{msg}\n\nThis order needs to be resolved manually in Helm.",
+                )
 
     return len(orders)
 
@@ -500,14 +505,32 @@ def _click_visible_toggle_or_retry_shipping(page: Page, retry_select_shipping) -
         retry_select_shipping(page)
         toggle.first.wait_for(state="visible", timeout=10000)
 
-    toggle.first.click(timeout=5000)
-    _wait_for_network_idle(page)
+    if toggle.first.locator(".toggle-off.active").count() > 0:
+        toggle.first.click(timeout=5000)
+        _wait_for_network_idle(page)
+    else:
+        print("[INFO] Lock toggle is already ON — skipping click")
 
 
 def _select_order_status_pregen(page: Page) -> None:
     status = page.locator("select[name='status_id']")
     status.first.wait_for(state="visible", timeout=10000)
     status.first.select_option("3003", timeout=5000)
+    status.first.evaluate("""
+        select => {
+            select.dispatchEvent(new Event("input", { bubbles: true }));
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            if (typeof $ !== "undefined") {
+                $(select).trigger("change");
+            }
+            if (typeof window.statusChange === "function") {
+                window.statusChange(select);
+            }
+            if (typeof window.orderStatusChange === "function") {
+                window.orderStatusChange(select);
+            }
+        }
+    """)
     _wait_for_network_idle(page)
 
 
@@ -899,6 +922,7 @@ def _run_pregen_failure_detail_pass(
     pass_label: str,
     step_prefix: str,
     wait_step: int,
+    notify_on_order_failure: bool = True,
 ) -> None:
     processed_count = _process_current_pregen_failure_orders(
         page,
@@ -907,6 +931,7 @@ def _run_pregen_failure_detail_pass(
         shipping_description,
         pass_label,
         step_prefix,
+        notify_on_order_failure,
     )
     print(f"[INFO] {pass_label}: processed {processed_count} order(s).")
     try:
@@ -1135,6 +1160,7 @@ def run(config: Config) -> int:
                 "Pass 1",
                 "Step 3",
                 4,
+                notify_on_order_failure=False,
             )
 
             final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
@@ -1161,6 +1187,7 @@ def run(config: Config) -> int:
                 "Pass 2",
                 "Step 7",
                 8,
+                notify_on_order_failure=False,
             )
 
             final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
@@ -1196,6 +1223,7 @@ def run(config: Config) -> int:
                 "Pass 3",
                 "Step 15",
                 16,
+                notify_on_order_failure=False,
             )
 
             final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
@@ -1231,6 +1259,7 @@ def run(config: Config) -> int:
                 "Pass 4",
                 "Step 23",
                 24,
+                notify_on_order_failure=True,
             )
 
             remaining_count = _check_remaining_today_ship_by_date_pregen_failure_orders(
