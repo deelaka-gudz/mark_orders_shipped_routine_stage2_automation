@@ -104,6 +104,20 @@ def _send_failure_email(config: Any, subject: str, body: str) -> None:
         print(f"[WARN] Could not send notification email: {exc}")
 
 
+def _is_abort_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in (
+            "err_aborted",
+            "net::err_",
+            "target closed",
+            "execution context was destroyed",
+            "page closed",
+        )
+    )
+
+
 def _wait_for_network_idle(page: Page, timeout_ms: int = 10000) -> None:
     try:
         page.wait_for_load_state("networkidle", timeout=timeout_ms)
@@ -327,17 +341,41 @@ def _process_current_pregen_failure_orders(
                 notify_on_order_failure,
             )
         except Exception as order_exc:
-            msg = (
-                f"{pass_label} ({step_prefix}[{index}]): "
-                f"Order {order['order_id']} failed: {order_exc}"
-            )
-            print(f"[WARN] {msg}")
-            if notify_on_order_failure:
-                _send_failure_email(
-                    config,
-                    f"PreGen Failure: Order {order['order_id']} failed ({pass_label})",
-                    f"{msg}\n\nThis order needs to be resolved manually in Helm.",
+            if _is_abort_error(order_exc):
+                print(
+                    f"[WARN] Abort error on order {order['order_id']} — retrying once: {order_exc}"
                 )
+                page.wait_for_timeout(2000)
+                try:
+                    _process_pregen_failure_order(
+                        page,
+                        order,
+                        index,
+                        config,
+                        select_shipping,
+                        shipping_description,
+                        step_prefix,
+                        notify_on_order_failure,
+                    )
+                except Exception as retry_exc:
+                    retry_msg = (
+                        f"{pass_label} ({step_prefix}[{index}]): "
+                        f"Order {order['order_id']} failed after abort-error retry: {retry_exc}"
+                    )
+                    print(f"[WARN] {retry_msg}")
+                    raise RuntimeError(retry_msg) from retry_exc
+            else:
+                msg = (
+                    f"{pass_label} ({step_prefix}[{index}]): "
+                    f"Order {order['order_id']} failed: {order_exc}"
+                )
+                print(f"[WARN] {msg}")
+                if notify_on_order_failure:
+                    _send_failure_email(
+                        config,
+                        f"PreGen Failure: Order {order['order_id']} failed ({pass_label})",
+                        f"{msg}\n\nThis order needs to be resolved manually in Helm.",
+                    )
 
     return len(orders)
 
