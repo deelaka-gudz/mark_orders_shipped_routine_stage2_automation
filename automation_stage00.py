@@ -543,9 +543,22 @@ def _click_visible_toggle_or_retry_shipping(page: Page, retry_select_shipping) -
         retry_select_shipping(page)
         toggle.first.wait_for(state="visible", timeout=10000)
 
+    # If still locked from a prior pass, unlock first so the re-lock binds to the
+    # newly-selected shipping method rather than the stale one.
+    if toggle.first.locator(".toggle-off.active").count() == 0:
+        print(
+            "[INFO] Lock toggle is ON from a prior pass — unlocking to re-lock with new shipping"
+        )
+        toggle.first.click(timeout=5000)
+        _wait_for_network_idle(page)
+        page.wait_for_timeout(500)
+
     if toggle.first.locator(".toggle-off.active").count() > 0:
         toggle.first.click(timeout=5000)
         _wait_for_network_idle(page)
+        # Give Helm time to register the lock before we change the status,
+        # preventing label generation from starting before the lock is persisted.
+        page.wait_for_timeout(2000)
     else:
         print("[INFO] Lock toggle is already ON — skipping click")
 
@@ -553,23 +566,46 @@ def _click_visible_toggle_or_retry_shipping(page: Page, retry_select_shipping) -
 def _select_order_status_pregen(page: Page) -> None:
     status = page.locator("select[name='status_id']")
     status.first.wait_for(state="visible", timeout=10000)
-    status.first.select_option("3003", timeout=5000)
-    status.first.evaluate("""
-        select => {
-            select.dispatchEvent(new Event("input", { bubbles: true }));
-            select.dispatchEvent(new Event("change", { bubbles: true }));
-            if (typeof $ !== "undefined") {
-                $(select).trigger("change");
+
+    for attempt in range(1, 3):
+        status.first.select_option("3003", timeout=5000)
+        # Re-assert the value before each event in case Helm's "input" handler reverts
+        # it to the previous status — if we don't, "change" fires with the wrong value
+        # and Helm logs "PreGen Failure → PreGen Failure" instead of "→ PreGen".
+        status.first.evaluate("""
+            select => {
+                select.value = "3003";
+                select.dispatchEvent(new Event("input", { bubbles: true }));
+                select.value = "3003";
+                select.dispatchEvent(new Event("change", { bubbles: true }));
+                if (typeof $ !== "undefined") {
+                    $(select).trigger("change");
+                }
+                if (typeof window.statusChange === "function") {
+                    window.statusChange(select);
+                }
+                if (typeof window.orderStatusChange === "function") {
+                    window.orderStatusChange(select);
+                }
             }
-            if (typeof window.statusChange === "function") {
-                window.statusChange(select);
-            }
-            if (typeof window.orderStatusChange === "function") {
-                window.orderStatusChange(select);
-            }
-        }
-    """)
-    _wait_for_network_idle(page)
+        """)
+        _wait_for_network_idle(page)
+        page.wait_for_timeout(500)
+
+        actual = status.first.input_value(timeout=5000)
+        if actual == "3003":
+            return
+        print(
+            f"[WARN] Status select shows {actual!r} after attempt {attempt}; "
+            "expected '3003' (PreGen) — retrying after delay"
+        )
+        if attempt < 2:
+            page.wait_for_timeout(2000)
+
+    raise RuntimeError(
+        f"Status did not change to PreGen (3003) after 2 attempts; "
+        f"select shows {actual!r}"
+    )
 
 
 def _click_filters_button(page: Page) -> None:
