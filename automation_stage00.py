@@ -894,14 +894,30 @@ def _dashboard_status_count_by_name(page: Page, status_name: str) -> int:
         """
         statusName => {
             const normalize = value => value.replace(/\\s+/g, " ").trim();
-            const labels = Array.from(document.querySelectorAll("p, span, div"))
-                .filter(element => normalize(element.textContent || "") === statusName);
+            const normLower = normalize(statusName).toLowerCase();
+
+            const allElements = Array.from(
+                document.querySelectorAll("p, span, div, td, th, li, a, button")
+            );
+
+            // Exact case-insensitive match first; fall back to elements whose
+            // trimmed text starts with the status name (handles trailing counts
+            // baked into the label like "PreGen 3").
+            let labels = allElements.filter(
+                el => normalize(el.textContent || "").toLowerCase() === normLower
+            );
+            if (labels.length === 0) {
+                labels = allElements.filter(el => {
+                    const t = normalize(el.textContent || "").toLowerCase();
+                    return t.startsWith(normLower) && !t.startsWith(normLower + " failure");
+                });
+            }
 
             for (const label of labels) {
                 let node = label.parentElement;
                 for (let depth = 0; node && depth < 6; depth += 1, node = node.parentElement) {
                     const text = normalize(node.textContent || "");
-                    if (!text.includes(statusName)) {
+                    if (!text.toLowerCase().includes(normLower)) {
                         continue;
                     }
                     const numbers = text.match(/\\b\\d+\\b/g);
