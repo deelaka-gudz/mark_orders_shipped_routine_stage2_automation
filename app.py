@@ -203,7 +203,7 @@ def render_generated_files() -> None:
                 ),
             }
         )
-    st.dataframe(rows, hide_index=True, use_container_width=True)
+    st.dataframe(rows, hide_index=True, width="stretch")
 
 
 def render_downloads() -> None:
@@ -229,6 +229,7 @@ def render_downloads() -> None:
             data=final_output_path.read_bytes(),
             file_name=final_output_path.name,
             mime="text/plain",
+            key="download_tracking_upload",
         )
 
     else:
@@ -244,6 +245,7 @@ def render_downloads() -> None:
             data=UNMAPPED_COURIERS_PATH.read_bytes(),
             file_name=UNMAPPED_COURIERS_PATH.name,
             mime="text/csv",
+            key="download_unmapped_courier",
         )
     elif UNMAPPED_COURIERS_PATH.exists():
         st.success("No unmapped courier services found.")
@@ -318,7 +320,7 @@ def render_cancelled_tracking_rows(path: Path) -> None:
     st.dataframe(
         [{column: row.get(column, "") for column in visible_columns} for row in rows],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -353,7 +355,7 @@ def main() -> None:
         run_button = run_button_slot.button(
             "Running..." if st.session_state.automation_running else "Click to Start",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             disabled=st.session_state.automation_running,
             key="start_automation_button",
         )
@@ -387,7 +389,7 @@ def main() -> None:
         run_button_slot.button(
             "Running...",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             disabled=True,
             key="running_automation_button",
         )
@@ -435,7 +437,7 @@ def main() -> None:
             run_button_slot.button(
                 "Click to Start",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 disabled=False,
                 key="restart_automation_button",
             )
