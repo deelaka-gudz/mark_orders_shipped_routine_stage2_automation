@@ -16,6 +16,28 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
+_ROOT = Path(__file__).resolve().parent
+_PREGEN_INITIAL_IDS_PATH = _ROOT / "downloads" / "pregen_initial_run_ids.txt"
+
+
+def _save_initial_pregen_order_ids(orders: list[dict[str, str]]) -> None:
+    _PREGEN_INITIAL_IDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ids = [o["order_id"] for o in orders]
+    _PREGEN_INITIAL_IDS_PATH.write_text("\n".join(ids), encoding="utf-8")
+    print(
+        f"[INFO] Saved {len(ids)} initial PreGen Failure order ID(s) for cross-check: {ids}"
+    )
+
+
+def _load_initial_pregen_order_ids() -> set[str]:
+    if not _PREGEN_INITIAL_IDS_PATH.exists():
+        return set()
+    return {
+        line.strip()
+        for line in _PREGEN_INITIAL_IDS_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+
 
 _MANUAL_INTERVENTION_RECIPIENTS = [
     "supply@gudz.com",
@@ -315,6 +337,7 @@ def _process_current_pregen_failure_orders(
     pass_label: str,
     step_prefix: str,
     notify_on_order_failure: bool = True,
+    allowed_order_ids: set[str] | None = None,
 ) -> int:
     try:
         orders = _collect_order_links(page)
@@ -327,6 +350,20 @@ def _process_current_pregen_failure_orders(
             f"{msg}\n\nPlease open Helm and process the remaining PreGen Failure orders manually.",
         )
         return 0
+
+    if allowed_order_ids is not None:
+        new_orders = [o for o in orders if o["order_id"] not in allowed_order_ids]
+        for o in new_orders:
+            print(
+                f"[WARN] {pass_label}: Order {o['order_id']} appeared after the initial "
+                "snapshot — skipping TPS 48 With Signature. It will be picked up on the next run."
+            )
+        orders = [o for o in orders if o["order_id"] in allowed_order_ids]
+        if not orders:
+            print(
+                f"[INFO] {pass_label}: No orders from the initial snapshot remain — skipping pass."
+            )
+            return 0
 
     for index, order in enumerate(orders, start=1):
         try:
@@ -1013,6 +1050,7 @@ def _run_pregen_failure_detail_pass(
     step_prefix: str,
     wait_step: int,
     notify_on_order_failure: bool = True,
+    allowed_order_ids: set[str] | None = None,
 ) -> None:
     processed_count = _process_current_pregen_failure_orders(
         page,
@@ -1022,6 +1060,7 @@ def _run_pregen_failure_detail_pass(
         pass_label,
         step_prefix,
         notify_on_order_failure,
+        allowed_order_ids,
     )
     print(f"[INFO] {pass_label}: processed {processed_count} order(s).")
     try:
@@ -1242,6 +1281,11 @@ def run(config: Config) -> int:
                 return 0
             _log_step("Step 2: Click Pregen failure")
 
+            initial_orders = _collect_order_links(page)
+            _save_initial_pregen_order_ids(initial_orders)
+            initial_order_ids = {o["order_id"] for o in initial_orders}
+            _log_step("Step 2a: Snapshot initial PreGen Failure order IDs")
+
             _run_pregen_failure_detail_pass(
                 page,
                 config,
@@ -1251,6 +1295,7 @@ def run(config: Config) -> int:
                 "Step 3",
                 4,
                 notify_on_order_failure=False,
+                allowed_order_ids=initial_order_ids,
             )
 
             final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
@@ -1278,6 +1323,7 @@ def run(config: Config) -> int:
                 "Step 7",
                 8,
                 notify_on_order_failure=False,
+                allowed_order_ids=initial_order_ids,
             )
 
             final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
@@ -1314,6 +1360,7 @@ def run(config: Config) -> int:
                 "Step 15",
                 16,
                 notify_on_order_failure=False,
+                allowed_order_ids=initial_order_ids,
             )
 
             final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
@@ -1350,6 +1397,7 @@ def run(config: Config) -> int:
                 "Step 23",
                 24,
                 notify_on_order_failure=True,
+                allowed_order_ids=initial_order_ids,
             )
 
             remaining_count = _check_remaining_today_ship_by_date_pregen_failure_orders(
