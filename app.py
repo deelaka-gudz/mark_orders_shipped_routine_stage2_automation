@@ -206,7 +206,7 @@ def render_generated_files() -> None:
     st.dataframe(rows, hide_index=True, width="stretch")
 
 
-def render_downloads() -> None:
+def render_downloads(key_suffix: str = "") -> None:
     st.subheader("Final Output")
     final_output_path = latest_tracking_upload_path()
     if final_output_path:
@@ -229,7 +229,7 @@ def render_downloads() -> None:
             data=final_output_path.read_bytes(),
             file_name=final_output_path.name,
             mime="text/plain",
-            key="download_tracking_upload",
+            key=f"download_tracking_upload{key_suffix}",
         )
 
     else:
@@ -245,7 +245,7 @@ def render_downloads() -> None:
             data=UNMAPPED_COURIERS_PATH.read_bytes(),
             file_name=UNMAPPED_COURIERS_PATH.name,
             mime="text/csv",
-            key="download_unmapped_courier",
+            key=f"download_unmapped_courier{key_suffix}",
         )
     elif UNMAPPED_COURIERS_PATH.exists():
         st.success("No unmapped courier services found.")
@@ -364,7 +364,7 @@ def main() -> None:
         generated_files_slot = st.empty()
         run_summary_slot = st.empty()
         with final_output_slot.container():
-            render_downloads()
+            render_downloads("_initial")
         with generated_files_slot.container():
             render_generated_files()
 
@@ -460,7 +460,7 @@ def main() -> None:
                     )
 
         with final_output_slot.container():
-            render_downloads()
+            render_downloads("_post_run")
         with generated_files_slot.container():
             render_generated_files()
 
