@@ -964,7 +964,8 @@ def _dashboard_status_count_by_name(page: Page, status_name: str) -> int:
                 }
             }
 
-            throw new Error(`Could not find dashboard status count for ${statusName}`);
+            // Tile not found on dashboard means count is 0 (Helm hides zero-count tiles).
+            return 0;
         }
         """,
         status_name,
@@ -980,14 +981,19 @@ def _wait_for_pregen_count_zero(
     while True:
         try:
             _go_to_dashboard(page)
-        except PlaywrightTimeoutError:
-            print("[INFO] Dashboard load timed out; retrying...")
+        except (PlaywrightTimeoutError, RuntimeError):
+            print("[INFO] Dashboard navigation failed; retrying...")
             if time.monotonic() >= deadline:
                 raise RuntimeError(
                     "Timed out waiting for dashboard while checking PreGen count."
                 )
             page.wait_for_timeout(poll_ms)
             continue
+        try:
+            page.locator("#status_id_3003").first.wait_for(state="visible", timeout=15000)
+        except (PlaywrightTimeoutError, PlaywrightError):
+            print("[INFO] PreGen tile not yet visible on dashboard; treating count as 0.")
+            return
         pregen_count = _status_count(page, "#status_id_3003")
         print(f"[INFO] PreGen status count: {pregen_count}")
         if pregen_count == 0:
