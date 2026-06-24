@@ -8,12 +8,14 @@ import time
 import csv
 import html
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS_DIR = ROOT / "downloads"
+LOGS_DIR = DOWNLOADS_DIR / "logs"
 FINAL_OUTPUT_PATTERN = "tracking_upload_template*.txt"
 UNMAPPED_COURIERS_PATH = DOWNLOADS_DIR / "unmapped_courier_services.csv"
 
@@ -43,6 +45,15 @@ def format_duration(seconds: float) -> str:
     if hours:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def save_run_log(log_lines: list[str]) -> Path:
+    now = datetime.now()
+    date_folder = LOGS_DIR / now.strftime("%Y-%m-%d")
+    date_folder.mkdir(parents=True, exist_ok=True)
+    log_path = date_folder / now.strftime("%H-%M-%S.txt")
+    log_path.write_text("\n".join(log_lines), encoding="utf-8")
+    return log_path
 
 
 def parse_log_line(line: str) -> tuple[str, str, str]:
@@ -206,7 +217,7 @@ def render_generated_files() -> None:
     st.dataframe(rows, hide_index=True, width="stretch")
 
 
-def render_downloads() -> None:
+def render_downloads(key_suffix: str = "") -> None:
     st.subheader("Final Output")
     final_output_path = latest_tracking_upload_path()
     if final_output_path:
@@ -229,7 +240,7 @@ def render_downloads() -> None:
             data=final_output_path.read_bytes(),
             file_name=final_output_path.name,
             mime="text/plain",
-            key="download_tracking_upload",
+            key=f"download_tracking_upload{key_suffix}",
         )
 
     else:
@@ -245,7 +256,7 @@ def render_downloads() -> None:
             data=UNMAPPED_COURIERS_PATH.read_bytes(),
             file_name=UNMAPPED_COURIERS_PATH.name,
             mime="text/csv",
-            key="download_unmapped_courier",
+            key=f"download_unmapped_courier{key_suffix}",
         )
     elif UNMAPPED_COURIERS_PATH.exists():
         st.success("No unmapped courier services found.")
@@ -364,7 +375,7 @@ def main() -> None:
         generated_files_slot = st.empty()
         run_summary_slot = st.empty()
         with final_output_slot.container():
-            render_downloads()
+            render_downloads("_initial")
         with generated_files_slot.container():
             render_generated_files()
 
@@ -441,6 +452,9 @@ def main() -> None:
                 disabled=False,
                 key="restart_automation_button",
             )
+            if log_lines:
+                saved_log = save_run_log(log_lines)
+                st.toast(f"Log saved: {saved_log.name}")
 
         with run_summary_slot.container():
             with st.expander("Run Summary", expanded=True):
@@ -460,7 +474,7 @@ def main() -> None:
                     )
 
         with final_output_slot.container():
-            render_downloads()
+            render_downloads("_post_run")
         with generated_files_slot.container():
             render_generated_files()
 
