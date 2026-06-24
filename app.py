@@ -8,12 +8,14 @@ import time
 import csv
 import html
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS_DIR = ROOT / "downloads"
+LOGS_DIR = DOWNLOADS_DIR / "logs"
 FINAL_OUTPUT_PATTERN = "tracking_upload_template*.txt"
 UNMAPPED_COURIERS_PATH = DOWNLOADS_DIR / "unmapped_courier_services.csv"
 
@@ -43,6 +45,15 @@ def format_duration(seconds: float) -> str:
     if hours:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def save_run_log(log_lines: list[str]) -> Path:
+    now = datetime.now()
+    date_folder = LOGS_DIR / now.strftime("%Y-%m-%d")
+    date_folder.mkdir(parents=True, exist_ok=True)
+    log_path = date_folder / now.strftime("%H-%M-%S.txt")
+    log_path.write_text("\n".join(log_lines), encoding="utf-8")
+    return log_path
 
 
 def parse_log_line(line: str) -> tuple[str, str, str]:
@@ -441,6 +452,9 @@ def main() -> None:
                 disabled=False,
                 key="restart_automation_button",
             )
+            if log_lines:
+                saved_log = save_run_log(log_lines)
+                st.toast(f"Log saved: {saved_log.name}")
 
         with run_summary_slot.container():
             with st.expander("Run Summary", expanded=True):
