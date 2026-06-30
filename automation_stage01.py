@@ -180,14 +180,85 @@ def _pregen_failure_status_count(page: Page) -> int:
         """)
 
 
+def _go_to_pregen_failure_orders_page(page: Page) -> None:
+    page.goto(
+        "https://mybeautyandcareltd1.myhelm.app/orders/index?filters[status][]=3009",
+        wait_until="domcontentloaded",
+        timeout=60000,
+    )
+    _wait_for_network_idle(page)
+
+
+def _click_filters_button(page: Page) -> None:
+    filters_btn = page.locator("button.dc-main-filters-trigger")
+    filters_btn.first.wait_for(state="visible", timeout=10000)
+    filters_btn.first.click(timeout=5000)
+    _wait_for_network_idle(page)
+    page.wait_for_timeout(500)
+
+
+def _click_ship_by_date_filter(page: Page) -> None:
+    trigger = page.locator(".custom-dropdown__trigger[data-dropdown='ship_by_date']")
+    trigger.first.wait_for(state="visible", timeout=10000)
+    trigger.first.click(timeout=5000)
+    page.wait_for_timeout(500)
+
+
+def _fill_ship_by_date_today(page: Page) -> None:
+    today = datetime.date.today()
+    date_str = f"{today.day} {today.strftime('%B %Y')}"
+    page.evaluate(
+        """(dateStr) => {
+            const from = document.getElementById('ship_by_date-date-from');
+            const to   = document.getElementById('ship_by_date-date-to');
+            const full = document.getElementById('ship_by_date-date-full');
+            if (!from || !to || !full) {
+                throw new Error('Ship By Date filter inputs not found on page');
+            }
+            from.value = dateStr;
+            to.value   = dateStr;
+            full.value = dateStr + ',' + dateStr;
+            full.dispatchEvent(new Event('change', { bubbles: true }));
+            if (typeof $ !== 'undefined') {
+                $(full).trigger('change');
+            }
+        }""",
+        date_str,
+    )
+    print(f"[INFO] Ship By Date set to: {date_str}")
+    page.wait_for_timeout(500)
+
+
+def _click_apply_filters(page: Page) -> None:
+    apply_btn = page.locator("button#apply-button")
+    apply_btn.first.wait_for(state="visible", timeout=10000)
+    apply_btn.first.click(timeout=5000)
+    page.wait_for_load_state("domcontentloaded")
+    _wait_for_network_idle(page)
+
+
+def _get_filtered_record_count(page: Page) -> int:
+    try:
+        span = page.locator("span.check-filtered.table-select-all")
+        span.first.wait_for(state="visible", timeout=10000)
+        text = span.first.inner_text(timeout=5000)
+        match = re.search(r"/\s*(\d+)\s*records", text)
+        if match:
+            return int(match.group(1))
+    except Exception:
+        pass
+    return 0
+
+
 def _send_pregen_failure_block_email(count: int) -> None:
     notify_from = os.getenv("NOTIFY_EMAIL_FROM", "")
     notify_password = os.getenv("NOTIFY_EMAIL_APP_PASSWORD", "")
     if not (notify_from and notify_password):
         return
-    subject = f"ACTION REQUIRED: {count} PreGen Failure order(s) — Mark Orders Shipped cannot proceed"
+    today_str = datetime.date.today().strftime("%d %B %Y")
+    subject = f"ACTION REQUIRED: {count} PreGen Failure order(s) for {today_str} — Mark Orders Shipped cannot proceed"
     body = (
-        f"{count} PreGen Failure order(s) were found in Helm.\n\n"
+        f"{count} PreGen Failure order(s) with today's Ship By Date ({today_str}) were found in Helm.\n\n"
         "The Mark Orders Shipped automation cannot proceed until these are resolved.\n\n"
         "Please use the PreGen Failure tool to clear them first, "
         "then re-run the Mark Orders Shipped automation.\n\n"
@@ -212,18 +283,36 @@ def _send_pregen_failure_block_email(count: int) -> None:
 
 
 def _check_no_pregen_failures(page: Page) -> None:
-    count = _pregen_failure_status_count(page)
-    print(f"[INFO] PreGen Failure count: {count}")
+    dashboard_count = _pregen_failure_status_count(page)
+    print(f"[INFO] PreGen Failure dashboard count: {dashboard_count}")
 
-    if count == 0:
+    if dashboard_count == 0:
         _log_step("Step 2: No PreGen Failure orders — safe to proceed")
         return
 
-    _log_step(f"Step 2: {count} PreGen Failure order(s) found — cannot proceed")
-    _send_pregen_failure_block_email(count)
+    _go_to_pregen_failure_orders_page(page)
+    _click_filters_button(page)
+    _click_ship_by_date_filter(page)
+    _fill_ship_by_date_today(page)
+    _click_apply_filters(page)
+
+    today_count = _get_filtered_record_count(page)
+    print(f"[INFO] PreGen Failure count for today's Ship By Date: {today_count}")
+
+    if today_count == 0:
+        _log_step(
+            f"Step 2: {dashboard_count} PreGen Failure order(s) exist but none "
+            "match today's Ship By Date — safe to proceed"
+        )
+        return
+
+    _log_step(
+        f"Step 2: {today_count} PreGen Failure order(s) found for today — cannot proceed"
+    )
+    _send_pregen_failure_block_email(today_count)
     print(
-        f"[WARN] Exiting: {count} PreGen Failure order(s) must be resolved "
-        "using the PreGen Failure tool before this automation can run."
+        f"[WARN] Exiting: {today_count} PreGen Failure order(s) with today's Ship By Date "
+        "must be resolved using the PreGen Failure tool before this automation can run."
     )
     sys.exit(PREGEN_FAILURE_EXIT_CODE)
 
@@ -1371,13 +1460,13 @@ def fetch_rithum_orders_via_api(config: Config) -> Path:
             "CA API credentials missing. Set CA_APPLICATION_ID, CA_SHARED_SECRET, "
             "CA_REFRESH_TOKEN, and CA_PROFILE_ID in .env."
         )
-    _log_step("Step 1.1: Authenticating with CA REST API")
+    _log_step("Step 3.1: Authenticating with CA REST API")
     access_token = _ca_get_access_token(
         config.ca_application_id,  # type: ignore[arg-type]
         config.ca_shared_secret,  # type: ignore[arg-type]
         config.ca_refresh_token,  # type: ignore[arg-type]
     )
-    _log_step("Step 1.2: CA API access token obtained")
+    _log_step("Step 3.2: CA API access token obtained")
 
     today = datetime.date.today()
     tomorrow = today + datetime.timedelta(days=1)
@@ -1411,11 +1500,11 @@ def fetch_rithum_orders_via_api(config: Config) -> Path:
         if len(page) < page_size:
             break
 
-    _log_step(f"Step 1.3: Fetched {len(all_rows)} orders from CA REST API")
+    _log_step(f"Step 3.3: Fetched {len(all_rows)} orders from CA REST API")
     output_path = config.rithum_orders_output_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _write_dict_rows(output_path, all_rows)
-    _log_step(f"Step 1.4: Saved CA API orders to {output_path}")
+    _log_step(f"Step 3.4: Saved CA API orders to {output_path}")
     return output_path
 
 
