@@ -2,8 +2,10 @@ import csv
 import datetime
 import os
 import re
+import smtplib
 import sys
 import time
+from email.message import EmailMessage
 
 import requests
 from dataclasses import dataclass
@@ -19,6 +21,42 @@ from playwright.sync_api import sync_playwright
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 NO_RITHUM_ORDERS_EXIT_CODE = 10
+
+_NOTIFICATION_RECIPIENTS = [
+    "supply@gudz.com",
+    "veer@gudz.com",
+    "deelaka@gudz.com",
+    "chamike@gudz.com",
+    "lavanga@gudz.com",
+]
+
+
+def _send_stage1_failure_email(error: str) -> None:
+    notify_from = os.getenv("NOTIFY_EMAIL_FROM", "")
+    notify_password = os.getenv("NOTIFY_EMAIL_APP_PASSWORD", "")
+    if not (notify_from and notify_password):
+        return
+    subject = "Stage 1 Failed — Mark Orders Shipped"
+    body = (
+        "Stage 1 of the Mark Orders Shipped automation failed.\n\n"
+        f"Error: {error}\n\n"
+        "Stage 2 was not run. Please investigate and re-run the automation.\n\n"
+        "This is an automated notification from the Mark Orders Shipped automation."
+    )
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = notify_from
+        msg["To"] = ", ".join(_NOTIFICATION_RECIPIENTS)
+        msg.set_content(body)
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(notify_from, notify_password)
+            smtp.send_message(msg)
+        print(f"[INFO] Failure email sent to: {', '.join(_NOTIFICATION_RECIPIENTS)}")
+    except Exception as exc:
+        print(f"[WARN] Could not send failure email: {exc}")
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -1345,6 +1383,9 @@ def run(config: Config) -> int:
 
             time.sleep(2)
             return 0
+        except Exception as exc:
+            _send_stage1_failure_email(str(exc))
+            raise
         finally:
             try:
                 context.close()

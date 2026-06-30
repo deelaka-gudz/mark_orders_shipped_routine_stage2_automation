@@ -20,7 +20,6 @@ FINAL_OUTPUT_PATTERN = "tracking_upload_template*.txt"
 UNMAPPED_COURIERS_PATH = DOWNLOADS_DIR / "unmapped_courier_services.csv"
 
 STAGE_SCRIPTS = [
-    ("Stage 0", ROOT / "automation_stage00.py"),
     ("Stage 1", ROOT / "automation_stage01.py"),
     ("Stage 2", ROOT / "automation_stage02.py"),
 ]
@@ -185,9 +184,7 @@ def latest_tracking_upload_path() -> Path | None:
     if not DOWNLOADS_DIR.exists():
         return None
     files = [
-        path
-        for path in DOWNLOADS_DIR.glob(FINAL_OUTPUT_PATTERN)
-        if path.is_file()
+        path for path in DOWNLOADS_DIR.glob(FINAL_OUTPUT_PATTERN) if path.is_file()
     ]
     if not files:
         return None
