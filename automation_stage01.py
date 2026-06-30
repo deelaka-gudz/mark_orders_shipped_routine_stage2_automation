@@ -21,6 +21,7 @@ from playwright.sync_api import sync_playwright
 
 DOTENV_PATH = Path(__file__).resolve().with_name(".env")
 NO_RITHUM_ORDERS_EXIT_CODE = 10
+PREGEN_FAILURE_EXIT_CODE = 11
 
 _NOTIFICATION_RECIPIENTS = [
     "supply@gudz.com",
@@ -224,7 +225,7 @@ def _check_no_pregen_failures(page: Page) -> None:
         f"[WARN] Exiting: {count} PreGen Failure order(s) must be resolved "
         "using the PreGen Failure tool before this automation can run."
     )
-    sys.exit(1)
+    sys.exit(PREGEN_FAILURE_EXIT_CODE)
 
 
 class LoginFlow:
@@ -1437,7 +1438,6 @@ def run(config: Config) -> int:
             login.verify()
             _log_step("Step 1: Login to Helm")
 
-            _log_step("Step 2: Checking for pre-gen failures")
             _check_no_pregen_failures(page)
 
             rithum_orders_path = fetch_rithum_orders_via_api(config)

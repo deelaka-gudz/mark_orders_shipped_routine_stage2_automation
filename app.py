@@ -24,6 +24,7 @@ STAGE_SCRIPTS = [
     ("Stage 2", ROOT / "automation_stage02.py"),
 ]
 NO_RITHUM_ORDERS_EXIT_CODE = 10
+PREGEN_FAILURE_EXIT_CODE = 11
 
 LOG_PREFIX_RE = re.compile(r"^\[(?P<level>[A-Z]+)\]\s*(?P<message>.*)$")
 STEP_RE = re.compile(r"(Step\s+[0-9]+(?:\.[0-9]+)*[^:]*)")
@@ -160,6 +161,11 @@ def run_stage(
     elif stage_name == "Stage 1" and return_code == NO_RITHUM_ORDERS_EXIT_CODE:
         stage_status.warning(
             f"{stage_name} found no CA/Rithum orders in "
+            f"{format_duration(elapsed_seconds)}"
+        )
+    elif stage_name == "Stage 1" and return_code == PREGEN_FAILURE_EXIT_CODE:
+        stage_status.warning(
+            f"{stage_name} blocked by PreGen Failure orders in "
             f"{format_duration(elapsed_seconds)}"
         )
     else:
@@ -343,7 +349,6 @@ def unmapped_courier_rows(path: Path) -> list[dict[str, str]]:
         ]
 
 
-
 def main() -> None:
     st.set_page_config(
         page_title="Mark Orders Shipped Automation",
@@ -430,6 +435,15 @@ def main() -> None:
                         "orders to process today. Stage 2 was skipped."
                     )
                     break
+                if (
+                    stage_name == "Stage 1"
+                    and result.return_code == PREGEN_FAILURE_EXIT_CODE
+                ):
+                    workflow_status.warning(
+                        "Stopped after Stage 1 because PreGen Failure orders were found in Helm. "
+                        "Resolve them using the PreGen Failure tool, then re-run."
+                    )
+                    break
                 if result.return_code != 0:
                     workflow_status.error(f"Stopped because {stage_name} failed.")
                     break
@@ -463,6 +477,13 @@ def main() -> None:
                         and result.return_code == NO_RITHUM_ORDERS_EXIT_CODE
                     ):
                         status = "no CA/Rithum orders; remaining stages skipped"
+                    elif (
+                        result.name == "Stage 1"
+                        and result.return_code == PREGEN_FAILURE_EXIT_CODE
+                    ):
+                        status = (
+                            "blocked by PreGen Failure orders; remaining stages skipped"
+                        )
                     else:
                         status = "failed"
                     st.write(
