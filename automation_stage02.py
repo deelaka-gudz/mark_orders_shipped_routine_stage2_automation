@@ -64,7 +64,7 @@ def _send_completion_email() -> None:
         return
     subject = "All Stages Completed Successfully — Mark Orders Shipped"
     body = (
-        "All 3 stages of the Mark Orders Shipped automation completed successfully.\n\n"
+        "Stage 1 and Stage 2 of the Mark Orders Shipped automation completed successfully.\n\n"
         "The tracking upload handoff file is ready in the downloads folder.\n\n"
         "This is an automated notification from the Mark Orders Shipped automation."
     )
@@ -82,6 +82,35 @@ def _send_completion_email() -> None:
         print(f"[INFO] Completion email sent to: {', '.join(_NOTIFICATION_RECIPIENTS)}")
     except Exception as exc:
         print(f"[WARN] Could not send completion email: {exc}")
+
+
+def _send_failure_email(error: str) -> None:
+    notify_from = os.getenv("NOTIFY_EMAIL_FROM", "")
+    notify_password = os.getenv("NOTIFY_EMAIL_APP_PASSWORD", "")
+    if not (notify_from and notify_password):
+        return
+    subject = "Stage 2 Failed — Mark Orders Shipped"
+    body = (
+        "Stage 2 of the Mark Orders Shipped automation failed.\n\n"
+        f"Error: {error}\n\n"
+        "The tracking upload handoff file was not produced. "
+        "Please investigate and re-run the automation.\n\n"
+        "This is an automated notification from the Mark Orders Shipped automation."
+    )
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = notify_from
+        msg["To"] = ", ".join(_NOTIFICATION_RECIPIENTS)
+        msg.set_content(body)
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(notify_from, notify_password)
+            smtp.send_message(msg)
+        print(f"[INFO] Failure email sent to: {', '.join(_NOTIFICATION_RECIPIENTS)}")
+    except Exception as exc:
+        print(f"[WARN] Could not send failure email: {exc}")
 
 
 TRACKING_UPLOAD_TEMPLATE_COLUMNS = [
@@ -1700,6 +1729,9 @@ def run(config: Config) -> None:
             _send_completion_email()
 
             time.sleep(2)
+        except Exception as exc:
+            _send_failure_email(str(exc))
+            raise
         finally:
             try:
                 context.close()

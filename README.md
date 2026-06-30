@@ -226,18 +226,22 @@ python -m playwright install
 
 Create a `.env` file in the repo root. Use `.env.example` as the template.
 
-| Variable                    | Required | Used by       | Description                                                    |
-| --------------------------- | -------- | ------------- | -------------------------------------------------------------- |
-| `HELM_EMAIL`                | Yes      | Stage 1, 2    | Helm login email                                               |
-| `HELM_PASSWORD`             | Yes      | Stage 1, 2    | Helm login password                                            |
-| `CA_APPLICATION_ID`         | Yes      | Stage 1       | ChannelAdvisor API app ID                                      |
-| `CA_SHARED_SECRET`          | Yes      | Stage 1       | ChannelAdvisor API shared secret                               |
-| `CA_REFRESH_TOKEN`          | Yes      | Stage 1       | ChannelAdvisor OAuth2 refresh token                            |
-| `CA_PROFILE_ID`             | Yes      | Stage 1       | ChannelAdvisor profile ID                                      |
-| `AMAZON_EMAIL`              | Yes      | Stage 2       | Amazon Seller Central login email                              |
-| `AMAZON_PASSWORD`           | Yes      | Stage 2       | Amazon Seller Central login password                           |
-| `HEADLESS`                  | No       | Stage 1, 2    | Set `true` to run browsers without a window (default: `false`) |
-| `DEBUG`                     | No       | Stage 1, 2    | Set `true` for verbose `[INFO]` logging (default: `false`)     |
+| Variable                    | Required | Used by    | Description                                                        |
+| --------------------------- | -------- | ---------- | ------------------------------------------------------------------ |
+| `HELM_EMAIL`                | Yes      | Stage 1, 2 | Helm login email                                                   |
+| `HELM_PASSWORD`             | Yes      | Stage 1, 2 | Helm login password                                                |
+| `CA_APPLICATION_ID`         | Yes      | Stage 1    | ChannelAdvisor API app ID                                          |
+| `CA_SHARED_SECRET`          | Yes      | Stage 1    | ChannelAdvisor API shared secret                                   |
+| `CA_REFRESH_TOKEN`          | Yes      | Stage 1    | ChannelAdvisor OAuth2 refresh token                                |
+| `CA_PROFILE_ID`             | Yes      | Stage 1    | ChannelAdvisor profile ID                                          |
+| `AMAZON_EMAIL`              | Yes      | Stage 2    | Amazon Seller Central login email                                  |
+| `AMAZON_PASSWORD`           | Yes      | Stage 2    | Amazon Seller Central login password                               |
+| `HEADLESS`                  | No       | Stage 1, 2 | Set `true` to run browsers without a window (default: `false`)     |
+| `DEBUG`                     | No       | Stage 1, 2 | Set `true` for verbose `[INFO]` logging (default: `false`)         |
+| `NOTIFY_EMAIL_FROM`         | No       | Stage 1, 2 | Gmail address used as the sender for completion and failure alerts |
+| `NOTIFY_EMAIL_APP_PASSWORD` | No       | Stage 1, 2 | Gmail App Password for SMTP auth                                   |
+
+`NOTIFY_EMAIL_FROM` and `NOTIFY_EMAIL_APP_PASSWORD` are optional. If absent, all email sending is silently skipped. Completion and failure alerts are sent to `supply@gudz.com`, `veer@gudz.com`, `deelaka@gudz.com`, `chamike@gudz.com`, and `lavanga@gudz.com`.
 
 ## Run
 
