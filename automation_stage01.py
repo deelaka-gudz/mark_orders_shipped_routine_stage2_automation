@@ -147,6 +147,86 @@ def _fill_first_visible(
     raise RuntimeError(f"Could not find {description}.") from last_error
 
 
+def _pregen_failure_status_count(page: Page) -> int:
+    try:
+        raw_count = (
+            page.locator("#status_id_3009").first.text_content(timeout=10000) or ""
+        )
+        return int(re.sub(r"[^\d]", "", raw_count) or "0")
+    except (PlaywrightTimeoutError, PlaywrightError):
+        pass
+    return page.evaluate("""
+        () => {
+            const normalize = v => v.replace(/\\s+/g, " ").trim();
+            const target = "pregen failure";
+            const all = Array.from(
+                document.querySelectorAll("p, span, div, td, th, li, a, button")
+            );
+            const labels = all.filter(
+                el => normalize(el.textContent || "").toLowerCase() === target
+            );
+            for (const label of labels) {
+                let node = label.parentElement;
+                for (let d = 0; node && d < 6; d += 1, node = node.parentElement) {
+                    const text = normalize(node.textContent || "");
+                    if (!text.toLowerCase().includes(target)) continue;
+                    const nums = text.match(/\\b\\d+\\b/g);
+                    if (nums && nums.length > 0) return Number(nums[0]);
+                }
+            }
+            return 0;
+        }
+        """)
+
+
+def _send_pregen_failure_block_email(count: int) -> None:
+    notify_from = os.getenv("NOTIFY_EMAIL_FROM", "")
+    notify_password = os.getenv("NOTIFY_EMAIL_APP_PASSWORD", "")
+    if not (notify_from and notify_password):
+        return
+    subject = f"ACTION REQUIRED: {count} PreGen Failure order(s) — Mark Orders Shipped cannot proceed"
+    body = (
+        f"{count} PreGen Failure order(s) were found in Helm.\n\n"
+        "The Mark Orders Shipped automation cannot proceed until these are resolved.\n\n"
+        "Please use the PreGen Failure tool to clear them first, "
+        "then re-run the Mark Orders Shipped automation.\n\n"
+        "This is an automated alert from the Mark Orders Shipped automation."
+    )
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = notify_from
+        msg["To"] = ", ".join(_NOTIFICATION_RECIPIENTS)
+        msg.set_content(body)
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(notify_from, notify_password)
+            smtp.send_message(msg)
+        print(
+            f"[INFO] PreGen Failure block alert sent to: {', '.join(_NOTIFICATION_RECIPIENTS)}"
+        )
+    except Exception as exc:
+        print(f"[WARN] Could not send PreGen Failure block alert: {exc}")
+
+
+def _check_no_pregen_failures(page: Page) -> None:
+    count = _pregen_failure_status_count(page)
+    print(f"[INFO] PreGen Failure count: {count}")
+
+    if count == 0:
+        _log_step("Step 2: No PreGen Failure orders — safe to proceed")
+        return
+
+    _log_step(f"Step 2: {count} PreGen Failure order(s) found — cannot proceed")
+    _send_pregen_failure_block_email(count)
+    print(
+        f"[WARN] Exiting: {count} PreGen Failure order(s) must be resolved "
+        "using the PreGen Failure tool before this automation can run."
+    )
+    sys.exit(1)
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -1349,14 +1429,25 @@ def run(config: Config) -> int:
         page = context.new_page()
 
         try:
+            login = LoginFlow(page, config)
+            login.open()
+            login.fill_credentials()
+            login.submit()
+            page.wait_for_load_state("domcontentloaded")
+            login.verify()
+            _log_step("Step 1: Login to Helm")
+
+            _log_step("Step 2: Checking for pre-gen failures")
+            _check_no_pregen_failures(page)
+
             rithum_orders_path = fetch_rithum_orders_via_api(config)
-            _log_step(f"Step 1: Downloaded Rithum orders to {rithum_orders_path}")
+            _log_step(f"Step 3: Downloaded Rithum orders to {rithum_orders_path}")
 
             rithum_row_count = (
                 sum(1 for _ in open(rithum_orders_path, encoding="utf-8-sig")) - 1
             )
             if rithum_row_count <= 0:
-                _log_step("Step 1 result: 0 CA/Rithum orders to process today.")
+                _log_step("Step 3 result: 0 CA/Rithum orders to process today.")
                 print(
                     "[WARN] Stage 1 stopped before Helm Shipping Report download "
                     "because the CA/Rithum order export has 0 rows. Stage 2 should "
@@ -1369,13 +1460,13 @@ def run(config: Config) -> int:
             login.submit()
             page.wait_for_load_state("domcontentloaded")
             login.verify()
-            _log_step("Step 3: Login to Helm")
+            _log_step("Step 4: Login to Helm")
 
             open_reports_page(page, config)
-            _log_step("Step 3.1: Open Reports page")
+            _log_step("Step 5: Open Reports page")
 
             downloaded_path = download_shipping_report(page, config)
-            _log_step(f"Step 4: Download Shipping report to {downloaded_path}")
+            _log_step(f"Step 6: Download Shipping report to {downloaded_path}")
 
             matched_path = match_order_file_to_dc_shipping_report(config)
             if matched_path:
